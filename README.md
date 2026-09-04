@@ -8,8 +8,6 @@ Nuclear Option BepInEx plugin: **OA-27C**, **OA-27D**, and **OA-27E** hangar var
 
 This is a licensed derivative of [Aryx's OA-27 Cavalier](https://github.com/Aryx3D/Aryx-OA-27-Cavalier) (`Aryx_PropAttacker1`). The airframe mesh, textures, and original `.nobp` belong to **Aryx**. GitHub Releases include Aryx's `.nobp` so the pack is playable as a standalone install. This plugin does not replace Aryx's original hangar aircraft.
 
-**经 Aryx 授权发布。** 机体为 Aryx 的 OA-27 Cavalier。网格、贴图与原版 `.nobp` 归 Aryx。Release 压缩包内含该 `.nobp`，方便独立安装。
-
 ## Install
 
 1. [BepInEx 5](https://github.com/BepInEx/BepInEx) in the game folder.
@@ -21,17 +19,15 @@ This is a licensed derivative of [Aryx's OA-27 Cavalier](https://github.com/Aryx
 5. Delete leftover `OA27C.dll` if it is still there.
 6. Fully quit Steam, then launch.
 
-Plugin GUID: `com.ial.oa27variant`. Standalone: no Oritasy / BIA / MiG-15S compile dependency.
+Plugin GUID: `com.ial.oa27variant`.
 
 ## Variants
 
 | Hangar icon | Key | Notes |
 |-------------|-----|--------|
-| **OA-27C** | `Aryx_OA27_C` | Both factions. RCS 0, STOL / low-alt G, 2× turbine, 1 kt suicide fuze. First eject punches the WSO decoy; you cannot bail. |
-| **OA-27D** | `Aryx_OA27_D` | **BDF only.** Extra armor and fuel, 2× turbine, no suicide kit. Second eject is a real bail-out. |
-| **OA-27E** | `Aryx_OA27_E` | **PALA only.** 3× turbine, standing ECM, ground autocannons cannot damage it. Second eject is a real bail-out. |
-
-Unknown HQ keeps both D and E listed. Rank 1.
+| **OA-27C** | `Aryx_OA27_C` | Both factions.1 kt suicide fuze. First eject punches the WSO decoy; you cannot bail. |
+| **OA-27D** | `Aryx_OA27_D` | **BDF only.**  |
+| **OA-27E** | `Aryx_OA27_E` | **PALA only.** |
 
 **OA WSO** (C/D/E while the rear seater is aboard): dumps inbound missiles inside 10 km; **Y/N** for flares and target lock (does not steal your selected countermeasure); extra gunsight lead; GLOC floor.
 
