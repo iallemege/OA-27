@@ -16,7 +16,7 @@ Install Aryx's Cavalier first: [Aryx3D/Aryx-OA-27-Cavalier](https://github.com/A
 
 1. [BepInEx 5](https://github.com/BepInEx/BepInEx) in the game folder.
 2. [Blueprinter](https://github.com/nikkorap/NOBlueprinter-Releases/releases/latest) and Aryx's `Aryx.OA-27.Cavalier_*.nobp` in `BepInEx/plugins`.
-3. Download **OA-27-1.1.4.zip** from [Releases](https://github.com/iallemege/OA-27/releases).
+3. Download **OA-27-1.1.5.zip** from [Releases](https://github.com/iallemege/OA-27/releases).
 4. Extract into the Nuclear Option game folder so `OA-27Variant.dll` lands in `BepInEx/plugins/`.
 5. Delete leftover `OA27C.dll` if it is still there.
 6. Fully quit Steam, then launch.

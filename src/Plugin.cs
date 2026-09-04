@@ -1,3 +1,5 @@
+using System;
+using System.Reflection;
 using BepInEx;
 using BepInEx.Logging;
 using HarmonyLib;
@@ -9,7 +11,7 @@ namespace OA27Variant
     {
         public const string GUID = "com.ial.oa27variant";
         public const string Name = "OA-27Variant";
-        public const string Version = "1.1.4";
+        public const string Version = "1.1.5";
     }
 
     [BepInPlugin(PluginInfo.GUID, PluginInfo.Name, PluginInfo.Version)]
@@ -24,7 +26,7 @@ namespace OA27Variant
             Instance = this;
             Log = Logger;
             _harmony = new Harmony(PluginInfo.GUID);
-            _harmony.PatchAll();
+            PatchAllSafe();
             try { Service.EnsureClones(); }
             catch { }
             try { Service.StampAllDefs(); }
@@ -34,6 +36,55 @@ namespace OA27Variant
             Log.LogInfo(PluginInfo.Name + " v" + PluginInfo.Version
                 + " (GUID " + PluginInfo.GUID
                 + "). Independent OA WSO (Y/N flares and lock). C stealth/STOL, D BDF CAS, E PALA dash. Rank 1.");
+        }
+
+        private void PatchAllSafe()
+        {
+            Type[] types = null;
+            try { types = Assembly.GetExecutingAssembly().GetTypes(); }
+            catch (ReflectionTypeLoadException ex) { types = ex.Types; }
+            catch { types = null; }
+            if (types == null)
+                return;
+            int ok = 0;
+            int skip = 0;
+            for (int i = 0; i < types.Length; i++)
+            {
+                Type t = types[i];
+                if (t == null || !t.IsClass)
+                    continue;
+                if (!HasHarmonyPatch(t))
+                    continue;
+                try
+                {
+                    _harmony.CreateClassProcessor(t).Patch();
+                    ok++;
+                }
+                catch (Exception ex)
+                {
+                    skip++;
+                    Log.LogWarning("Harmony skip " + t.Name + ": " + ex.Message);
+                }
+            }
+            Log.LogInfo("Harmony patches applied " + ok + ", skipped " + skip);
+        }
+
+        private static bool HasHarmonyPatch(Type t)
+        {
+            object[] attrs = t.GetCustomAttributes(true);
+            if (attrs == null)
+                return false;
+            for (int i = 0; i < attrs.Length; i++)
+            {
+                if (attrs[i] == null)
+                    continue;
+                if (attrs[i] is HarmonyPatch)
+                    return true;
+                string n = attrs[i].GetType().Name;
+                if (n.IndexOf("HarmonyPatch", StringComparison.Ordinal) >= 0)
+                    return true;
+            }
+            return false;
         }
 
         private void Update()

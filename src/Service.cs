@@ -1125,6 +1125,9 @@ namespace OA27Variant
             return _donorDef;
         }
 
+        private static bool _cloneReadyLogged;
+        private static float _nextDonorWarn;
+
         internal static void EnsureClones()
         {
             NobpDonor.Ensure();
@@ -1152,6 +1155,22 @@ namespace OA27Variant
                     OaEShortName,
                     OaEEncDescription,
                     false);
+            if (_oaClone != null && _oaDClone != null && _oaEClone != null)
+            {
+                if (!_cloneReadyLogged && Plugin.Log != null)
+                {
+                    _cloneReadyLogged = true;
+                    Plugin.Log.LogInfo("OA-27C / OA-27D / OA-27E ready (cloned from "
+                        + OaDonorKey + ")");
+                }
+                return;
+            }
+            AircraftDefinition donor = FindDefByKey(OaDonorKey);
+            if (donor == null && Plugin.Log != null && Time.unscaledTime >= _nextDonorWarn)
+            {
+                _nextDonorWarn = Time.unscaledTime + 8f;
+                Plugin.Log.LogWarning("OA-27C/D/E waiting for Aryx donor " + OaDonorKey);
+            }
         }
 
         private static AircraftDefinition MakeClone(
@@ -4188,18 +4207,6 @@ namespace OA27Variant
             try { ac = __instance.GetComponentInParent<Aircraft>(); }
             catch { ac = null; }
             Service.ApplyPropPower(ac);
-        }
-    }
-
-    [HarmonyPatch(typeof(Aircraft), "Start")]
-    internal static class Patch_OA27V_AircraftStart
-    {
-        [HarmonyPostfix]
-        [HarmonyPriority(Priority.Last)]
-        private static void Postfix(Aircraft __instance)
-        {
-            Service.BindCloneDefinition(__instance);
-            Service.ApplyPropPower(__instance);
         }
     }
 
