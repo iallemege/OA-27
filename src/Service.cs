@@ -17,20 +17,20 @@ namespace OA27Variant
             "MiG-15S is a fighter that have modernization to work perfect in the 2080s, it have upgrade  all parts from the original version , because of IAL Design Bureau's modify,the engine of MIG-15 has change to IES-200 and add suicide nuclear bomb to do the Kamikaze work. Drone means cockpit canopy was welded shut.";
         internal const string OaDonorKey = "Aryx_PropAttacker1";
         internal const string OaJsonKey = "Aryx_OA27_C";
-        internal const string OaDisplayName = "OA-27C Cavalier";
+        internal const string OaDisplayName = "OA-27C Spectre";
         internal const string OaShortName = "OA-27C";
         internal const string OaEncDescription =
-            "OA-27C is the IAL replica of the Hartnell-Wesley OA-27 Cavalier. Own WSO station: dumps incoming missiles, Y/N flares, Y/N target lock, gunsight lead, GLOC brace. RCS is held at zero. Eject punches the WSO into a decoy — you stay and cannot bail. Short-field lift and a raised G limit near the ground. 1 kt suicide fuze. Gun pods stay.";
+            "OA-27C Spectre is the IAL stealth Cavalier. Own WSO station: dumps incoming missiles, Y/N flares, Y/N target lock, gunsight lead, GLOC brace. RCS is held at zero. Eject punches the WSO into a decoy — you stay and cannot bail. Short-field lift and a raised G limit near the ground. 1 kt suicide fuze. Gun pods stay.";
         internal const string OaDJsonKey = "Aryx_OA27_D";
-        internal const string OaDDisplayName = "OA-27D Cavalier";
+        internal const string OaDDisplayName = "OA-27D Anvil";
         internal const string OaDShortName = "OA-27D";
         internal const string OaDEncDescription =
-            "OA-27D is the Boscali CAS Cavalier: extra airframe toughness and fuel, doubled turbine, no suicide kit. Same OA WSO station as C while he is aboard (Y/N flares and locks); first eject punches him, second bails you out. PALA hangars do not list it.";
+            "OA-27D Anvil is the Boscali CAS Cavalier: extra airframe toughness and fuel, doubled turbine, no suicide kit. Same OA WSO station as C while he is aboard (Y/N flares and locks); first eject punches him, second bails you out. PALA hangars do not list it.";
         internal const string OaEJsonKey = "Aryx_OA27_E";
-        internal const string OaEDisplayName = "OA-27E Cavalier";
+        internal const string OaEDisplayName = "OA-27E Wraith";
         internal const string OaEShortName = "OA-27E";
         internal const string OaEEncDescription =
-            "OA-27E is the PALA dash Cavalier: triple turbine, standing ECM, and ground autocannons cannot damage it. No stealth kit and no suicide charge. Same OA WSO station as C/D while he is aboard (Y/N flares and locks); first eject punches him, second bails you out. Boscali hangars do not list it.";
+            "OA-27E Wraith is the PALA dash Cavalier: triple turbine, standing ECM, and ground autocannons cannot damage it. No stealth kit and no suicide charge. Same OA WSO station as C/D while he is aboard (Y/N flares and locks); first eject punches him, second bails you out. Boscali hangars do not list it.";
         internal const string FuzeHud = "[Suicide fuze armed]";
         internal const string GearUpHint = "[Press \\ to set fuze of suicide bomb]";
         internal const string EjectDenyHud = "you cannot eject because this is kamikaze drone";
@@ -259,8 +259,7 @@ namespace OA27Variant
                 return true;
             string n = def.unitName != null ? def.unitName : string.Empty;
             return n.IndexOf("OA-27C", StringComparison.OrdinalIgnoreCase) >= 0
-                && n.IndexOf("OA-27D", StringComparison.OrdinalIgnoreCase) < 0
-                && n.IndexOf("OA-27E", StringComparison.OrdinalIgnoreCase) < 0;
+                || string.Equals(n, OaDisplayName, StringComparison.OrdinalIgnoreCase);
         }
 
         internal static bool IsOaDDef(UnitDefinition def)
@@ -272,7 +271,8 @@ namespace OA27Variant
                 && string.Equals(key, OaDJsonKey, StringComparison.OrdinalIgnoreCase))
                 return true;
             string n = def.unitName != null ? def.unitName : string.Empty;
-            return n.IndexOf("OA-27D", StringComparison.OrdinalIgnoreCase) >= 0;
+            return n.IndexOf("OA-27D", StringComparison.OrdinalIgnoreCase) >= 0
+                || string.Equals(n, OaDDisplayName, StringComparison.OrdinalIgnoreCase);
         }
 
         internal static bool IsOaEDef(UnitDefinition def)
@@ -284,7 +284,8 @@ namespace OA27Variant
                 && string.Equals(key, OaEJsonKey, StringComparison.OrdinalIgnoreCase))
                 return true;
             string n = def.unitName != null ? def.unitName : string.Empty;
-            return n.IndexOf("OA-27E", StringComparison.OrdinalIgnoreCase) >= 0;
+            return n.IndexOf("OA-27E", StringComparison.OrdinalIgnoreCase) >= 0
+                || string.Equals(n, OaEDisplayName, StringComparison.OrdinalIgnoreCase);
         }
 
         internal static bool IsOaConventionalDef(UnitDefinition def)
@@ -1306,6 +1307,9 @@ namespace OA27Variant
             else if (string.Equals(cur.jsonKey, OaDonorKey, StringComparison.OrdinalIgnoreCase)
                 && IsOaFamilyDef(want))
                 unit.definition = want;
+            ApplyEncyclopedia(want);
+            try { unit.NetworkunitName = want.unitName; }
+            catch { }
         }
 
         internal static void AdoptDonorLiveries(AircraftDefinition kam)
@@ -1380,13 +1384,20 @@ namespace OA27Variant
             if (EncOnce.Add(id))
             {
                 ApplyEncyclopedia(ac.definition as AircraftDefinition);
-                if (oa)
+            if (oa)
+            {
+                ShowOaCrew(ac);
+                ApplyPropPower(ac);
+                DetachOaHardpoints(ac);
+                OaTraits.OnSpawn(ac);
+                try
                 {
-                    ShowOaCrew(ac);
-                    ApplyPropPower(ac);
-                    DetachOaHardpoints(ac);
-                    OaTraits.OnSpawn(ac);
+                    AircraftDefinition named = ac.definition as AircraftDefinition;
+                    if (named != null && !string.IsNullOrEmpty(named.unitName))
+                        ac.NetworkunitName = named.unitName;
                 }
+                catch { }
+            }
                 else
                 {
                     HidePilotModel(ac);

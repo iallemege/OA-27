@@ -124,19 +124,19 @@ namespace OA27Variant
             if (Service.IsOaClone(ac))
             {
                 if (aboard)
-                    return "[OA WSO] dump / Y-N flares / Y-N lock. Eject punches the rear seat (decoy). You cannot bail.";
+                    return "[Spectre WSO] dump / Y-N flares / Y-N lock. Eject punches the rear seat (decoy). You cannot bail.";
                 return "[OA WSO gone] decoy only. You cannot eject.";
             }
             if (Service.IsOaDClone(ac))
             {
                 if (aboard)
-                    return "[OA WSO] dump / Y-N flares / Y-N lock. First eject punches WSO; second bails you out.";
+                    return "[Anvil WSO] dump / Y-N flares / Y-N lock. First eject punches WSO; second bails you out.";
                 return "[OA WSO gone] eject to bail.";
             }
             if (Service.IsOaEClone(ac))
             {
                 if (aboard)
-                    return "[OA WSO] dump / Y-N flares / Y-N lock. Ground guns cannot hurt this airframe. First eject punches WSO; second bails you out.";
+                    return "[Wraith WSO] dump / Y-N flares / Y-N lock. Ground guns cannot hurt this airframe. First eject punches WSO; second bails you out.";
                 return "[OA WSO gone] ECM still on. Eject to bail.";
             }
             return null;

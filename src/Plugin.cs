@@ -11,7 +11,7 @@ namespace OA27Variant
     {
         public const string GUID = "com.ial.oa27variant";
         public const string Name = "OA-27Variant";
-        public const string Version = "1.1.5";
+        public const string Version = "1.1.9";
     }
 
     [BepInPlugin(PluginInfo.GUID, PluginInfo.Name, PluginInfo.Version)]
@@ -33,9 +33,10 @@ namespace OA27Variant
             catch { }
             try { HangarInject.EnsureAiSupply(); }
             catch { }
+            LoadScreen.Arm();
             Log.LogInfo(PluginInfo.Name + " v" + PluginInfo.Version
                 + " (GUID " + PluginInfo.GUID
-                + "). Independent OA WSO (Y/N flares and lock). C stealth/STOL, D BDF CAS, E PALA dash. Rank 1.");
+                + "). Standalone hangar select. Spectre / Anvil / Wraith.");
         }
 
         private void PatchAllSafe()
@@ -98,6 +99,7 @@ namespace OA27Variant
 
         private void OnGUI()
         {
+            LoadScreen.Draw();
             Service.Draw();
             OaWso.Draw();
         }

@@ -46,7 +46,8 @@ if not exist "%MANAGED%\Assembly-CSharp.dll" (
   "%~dp0src\OaTraits.cs" ^
   "%~dp0src\OaWso.cs" ^
   "%~dp0src\NobpDonor.cs" ^
-  "%~dp0src\Inventory.cs"
+  "%~dp0src\Inventory.cs" ^
+  "%~dp0src\LoadScreen.cs"
 
 if errorlevel 1 (
   echo OA-27Variant BUILD FAILED

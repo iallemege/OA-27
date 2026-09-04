@@ -10,7 +10,8 @@ namespace OA27Variant
 {
     /// <summary>
     /// Blueprinter hangar ids (revetment1__revetment1) do not match 0.34 instance
-    /// names, so the definition shows up greyed-out. Put MiG-15S on every live hangar.
+    /// names, so the definition shows up greyed-out. Put OA-27C/D/E on every live hangar.
+    /// Icon colour uses CanFlyAircraft (in the airbase list), not empty pads / rank.
     /// </summary>
     internal static class HangarInject
     {
@@ -22,6 +23,10 @@ namespace OA27Variant
             AccessTools.Field(typeof(AircraftSelectionMenu), "airbase");
         private static readonly FieldInfo ButtonLabelField =
             AccessTools.Field(typeof(AircraftSelectionButton), "label");
+        private static readonly FieldInfo IndexField =
+            AccessTools.Field(typeof(AircraftSelectionMenu), "selectionIndex");
+        private static readonly FieldInfo SelectedTypeField =
+            AccessTools.Field(typeof(AircraftSelectionMenu), "selectedType");
         private static readonly FieldInfo SpawnedObjectField =
             AccessTools.Field(typeof(Hangar), "spawnedObject");
         private static readonly FieldInfo ClearDistanceField =
@@ -199,15 +204,109 @@ namespace OA27Variant
                 StripKeyFromHangar(hangar, Service.OaEJsonKey);
         }
 
+        internal static AircraftDefinition Canonical(AircraftDefinition def)
+        {
+            if (def == null)
+                return null;
+            Service.EnsureClones();
+            if (Service.IsOaEDef(def) && Service.OaEClone != null)
+                return Service.OaEClone;
+            if (Service.IsOaDDef(def) && Service.OaDClone != null)
+                return Service.OaDClone;
+            if (Service.IsOaDef(def) && Service.OaClone != null)
+                return Service.OaClone;
+            return def;
+        }
+
+        internal static int IndexOfKey(List<AircraftDefinition> list, AircraftDefinition def)
+        {
+            if (list == null || def == null)
+                return -1;
+            string key = def.jsonKey;
+            for (int i = 0; i < list.Count; i++)
+            {
+                AircraftDefinition cur = list[i];
+                if (cur == null)
+                    continue;
+                if (object.ReferenceEquals(cur, def))
+                    return i;
+                if (!string.IsNullOrEmpty(key)
+                    && string.Equals(cur.jsonKey, key, StringComparison.OrdinalIgnoreCase))
+                    return i;
+            }
+            return -1;
+        }
+
+        internal static int EnsureInSelection(AircraftSelectionMenu menu, AircraftDefinition def)
+        {
+            def = Canonical(def);
+            if (menu == null || def == null || SelectionField == null)
+                return -1;
+            List<AircraftDefinition> sel = SelectionField.GetValue(menu) as List<AircraftDefinition>;
+            if (sel == null)
+            {
+                sel = new List<AircraftDefinition>(8);
+                SelectionField.SetValue(menu, sel);
+            }
+            int idx = IndexOfKey(sel, def);
+            if (idx >= 0)
+            {
+                sel[idx] = def;
+                return idx;
+            }
+            sel.Add(def);
+            return sel.Count - 1;
+        }
+
+        internal static void PrepareSelection(AircraftSelectionMenu menu, ref AircraftDefinition definition)
+        {
+            if (menu == null || definition == null || !Service.IsOursDef(definition))
+                return;
+            if (!Service.LocalPlayerMaySelectExclusive(definition))
+                return;
+            definition = Canonical(definition);
+            InjectMenu(menu, MenuAirbase(menu));
+            int idx = EnsureInSelection(menu, definition);
+            if (IndexField != null && idx >= 0)
+            {
+                try { IndexField.SetValue(menu, idx); }
+                catch { }
+            }
+            if (SelectedTypeField != null)
+            {
+                try { SelectedTypeField.SetValue(menu, definition); }
+                catch { }
+            }
+            Service.ApplyEncyclopedia(definition);
+            RegisterNetwork(definition);
+        }
+
         private static void AddCloneToHangar(Hangar hangar, AircraftDefinition def)
         {
+            def = Canonical(def);
             if (hangar == null || def == null || AvailableAircraftField == null)
                 return;
             if (Service.IsDonorDef(def))
                 return;
             AircraftDefinition[] cur = AvailableAircraftField.GetValue(hangar) as AircraftDefinition[];
-            if (ArrayContains(cur, def))
-                return;
+            if (cur != null)
+            {
+                for (int i = 0; i < cur.Length; i++)
+                {
+                    AircraftDefinition have = cur[i];
+                    if (have == null)
+                        continue;
+                    if (object.ReferenceEquals(have, def))
+                        return;
+                    if (!string.IsNullOrEmpty(def.jsonKey)
+                        && string.Equals(have.jsonKey, def.jsonKey, StringComparison.OrdinalIgnoreCase))
+                    {
+                        cur[i] = def;
+                        AvailableAircraftField.SetValue(hangar, cur);
+                        return;
+                    }
+                }
+            }
             Service.ApplyEncyclopedia(def);
             RegisterNetwork(def);
             int n = cur != null ? cur.Length : 0;
@@ -604,10 +703,15 @@ namespace OA27Variant
 
         private static void AddCloneToList(List<AircraftDefinition> dest, AircraftDefinition def)
         {
+            def = Canonical(def);
             if (dest == null || def == null || Service.IsDonorDef(def))
                 return;
-            if (ListContains(dest, def))
+            int idx = IndexOfKey(dest, def);
+            if (idx >= 0)
+            {
+                dest[idx] = def;
                 return;
+            }
             dest.Add(def);
         }
 
@@ -636,6 +740,15 @@ namespace OA27Variant
                 else
                     StripKeyFromList(sel, Service.OaEJsonKey);
             }
+        }
+
+        internal static bool MenuOffers(AircraftSelectionMenu menu, AircraftDefinition def)
+        {
+            if (menu == null || def == null || SelectionField == null)
+                return false;
+            def = Canonical(def);
+            List<AircraftDefinition> sel = SelectionField.GetValue(menu) as List<AircraftDefinition>;
+            return IndexOfKey(sel, def) >= 0;
         }
 
         internal static bool HangarHasOurs(Hangar hangar)
@@ -1103,7 +1216,13 @@ namespace OA27Variant
                     SelectionField.GetValue(menu) as List<AircraftDefinition>;
                 int idx = (int)IndexField.GetValue(menu);
                 if (list != null && idx >= 0 && idx < list.Count)
-                    return list[idx];
+                    return HangarInject.Canonical(list[idx]);
+                AircraftDefinition want = null;
+                if (SelectedTypeField != null)
+                    want = SelectedTypeField.GetValue(menu) as AircraftDefinition;
+                int byKey = HangarInject.IndexOfKey(list, HangarInject.Canonical(want));
+                if (byKey >= 0)
+                    return list[byKey];
             }
             catch { }
             return null;
@@ -1260,6 +1379,83 @@ namespace OA27Variant
         }
     }
 
+    [HarmonyPatch(typeof(AircraftSelectionMenu), "SetSelectedType")]
+    internal static class Patch_Oa_SetSelectedType
+    {
+        [HarmonyPrefix]
+        [HarmonyPriority(Priority.First)]
+        private static void Prefix(AircraftSelectionMenu __instance, ref AircraftDefinition definition)
+        {
+            HangarInject.PrepareSelection(__instance, ref definition);
+        }
+    }
+
+    [HarmonyPatch(typeof(AircraftInventoryMenu), "SetSelectedType")]
+    internal static class Patch_Oa_InventorySelect
+    {
+        private static readonly FieldInfo InvMenuField =
+            AccessTools.Field(typeof(AircraftInventoryMenu), "selectionMenu");
+        private static bool _forwarding;
+
+        [HarmonyPostfix]
+        [HarmonyPriority(Priority.Last)]
+        private static void Postfix(AircraftInventoryMenu __instance, AircraftDefinition definition)
+        {
+            if (_forwarding || __instance == null || definition == null)
+                return;
+            if (!Service.IsOursDef(definition) || !Service.LocalPlayerMaySelectExclusive(definition))
+                return;
+            if (InvMenuField == null)
+                return;
+            AircraftSelectionMenu menu = InvMenuField.GetValue(__instance) as AircraftSelectionMenu;
+            if (menu == null)
+                return;
+            AircraftDefinition canon = HangarInject.Canonical(definition);
+            AircraftDefinition cur = null;
+            try { cur = menu.GetSelectedType(); }
+            catch { cur = null; }
+            if (cur != null && InventorySplit.SameKey(cur, canon) && Service.IsOursDef(cur))
+                return;
+            _forwarding = true;
+            try
+            {
+                HangarInject.PrepareSelection(menu, ref canon);
+                menu.SetSelectedType(canon);
+            }
+            catch { }
+            _forwarding = false;
+        }
+    }
+
+    [HarmonyPatch(typeof(AircraftSelectionMenu), "Update")]
+    internal static class Patch_Oa_SelMenuUpdate
+    {
+        private static readonly FieldInfo PreviewField =
+            AccessTools.Field(typeof(AircraftSelectionMenu), "previewAircraft");
+        private static readonly FieldInfo SelectedTypeField =
+            AccessTools.Field(typeof(AircraftSelectionMenu), "selectedType");
+
+        [HarmonyPrefix]
+        [HarmonyPriority(Priority.First)]
+        private static bool Prefix(AircraftSelectionMenu __instance)
+        {
+            if (__instance == null || PreviewField == null)
+                return true;
+            Aircraft preview = PreviewField.GetValue(__instance) as Aircraft;
+            if (preview != null)
+                return true;
+            AircraftDefinition sel = null;
+            if (SelectedTypeField != null)
+            {
+                try { sel = SelectedTypeField.GetValue(__instance) as AircraftDefinition; }
+                catch { sel = null; }
+            }
+            if (Service.IsOursDef(sel))
+                return false;
+            return true;
+        }
+    }
+
     [HarmonyPatch(typeof(AircraftSelectionMenu), "SpawnPreview")]
     internal static class Patch_MiG15S_SpawnPreview
     {
@@ -1275,7 +1471,7 @@ namespace OA27Variant
 
         [HarmonyFinalizer]
         [HarmonyPriority(Priority.Last)]
-        private static void Finalizer(AircraftSelectionMenu __instance)
+        private static Exception Finalizer(AircraftSelectionMenu __instance, Exception __exception)
         {
             Aircraft preview = null;
             try
@@ -1290,6 +1486,14 @@ namespace OA27Variant
                 OaFlyButton.BindPreviewDefinition(__instance);
                 OaFlyButton.Refresh(__instance);
             }
+            if (__exception == null)
+                return null;
+            AircraftDefinition sel = null;
+            try { sel = __instance != null ? __instance.GetSelectedType() : null; }
+            catch { sel = null; }
+            if (Service.IsOursDef(sel) || Service.IsOursDef(HangarInject.FindOaDef()))
+                return null;
+            return __exception;
         }
     }
 
@@ -1369,20 +1573,9 @@ namespace OA27Variant
                 __result = false;
                 return;
             }
-            if (!Service.MeetsRank(definition))
-            {
-                __result = false;
-                return;
-            }
             Airbase airbase = HangarInject.MenuAirbase(__instance);
             HangarInject.InjectMenu(__instance, airbase);
-            if (airbase == null)
-            {
-                if (!__result)
-                    __result = true;
-                return;
-            }
-            __result = HangarInject.AnyFreeHangar(airbase);
+            __result = HangarInject.MenuOffers(__instance, definition);
         }
     }
 
@@ -1396,11 +1589,6 @@ namespace OA27Variant
             if (__instance == null || !Service.IsOursDef(__instance.definition))
                 return;
             if (!Service.LocalPlayerMaySelectExclusive(__instance.definition))
-            {
-                __result = false;
-                return;
-            }
-            if (!Service.MeetsRank(__instance.definition))
             {
                 __result = false;
                 return;
@@ -1419,15 +1607,14 @@ namespace OA27Variant
         {
             if (__instance == null)
                 return;
-            AircraftDefinition def = __instance as AircraftDefinition;
             if (Service.IsOaConventionalDef(__instance))
             {
-                __result = Service.LocalPlayerMaySelectExclusive(__instance) && Service.MeetsRank(def);
+                __result = Service.LocalPlayerMaySelectExclusive(__instance);
                 return;
             }
             if (__result)
                 return;
-            if (Service.IsOursUnit(__instance) && Service.MeetsRank(def))
+            if (Service.IsOursUnit(__instance))
                 __result = true;
         }
     }
@@ -1440,15 +1627,14 @@ namespace OA27Variant
         {
             if (__instance == null)
                 return;
-            AircraftDefinition def = __instance as AircraftDefinition;
             if (Service.IsOaConventionalDef(__instance))
             {
-                __result = !(Service.LocalPlayerMaySelectExclusive(__instance) && Service.MeetsRank(def));
+                __result = !Service.LocalPlayerMaySelectExclusive(__instance);
                 return;
             }
             if (!__result)
                 return;
-            if (Service.IsOursUnit(__instance) && Service.MeetsRank(def))
+            if (Service.IsOursUnit(__instance))
                 __result = false;
         }
     }
@@ -1472,11 +1658,6 @@ namespace OA27Variant
             catch { p = null; }
             if (p != null)
                 owned = InventorySplit.CountOwned(p, __instance.definition, true) > 0;
-            if (!Service.MeetsRank(__instance.definition))
-            {
-                available = false;
-                return;
-            }
             available = true;
         }
 
