@@ -49,7 +49,6 @@ namespace OA27Variant
         private static readonly Dictionary<int, float> NextCue =
             new Dictionary<int, float>(8);
         private static readonly List<Missile> Scratch = new List<Missile>(64);
-        private static GUIStyle _hud;
         private static GUIStyle _askStyle;
         private static GUIStyle _askSub;
         private static AskKind _ask;
@@ -101,45 +100,6 @@ namespace OA27Variant
             if (!Service.IsOaFamilyClone(ac) || !Service.IsLiveAircraft(ac))
                 return;
             DrawAsk();
-            if (_ask != AskKind.None)
-                return;
-            string line = HudLine(ac);
-            if (string.IsNullOrEmpty(line))
-                return;
-            if (_hud == null)
-            {
-                _hud = new GUIStyle(GUI.skin.label);
-                _hud.alignment = TextAnchor.MiddleCenter;
-                _hud.fontSize = 18;
-                _hud.fontStyle = FontStyle.Bold;
-                _hud.normal.textColor = new Color(0.72f, 0.94f, 1f, 1f);
-            }
-            float w = 820f;
-            GUI.Label(new Rect((Screen.width - w) * 0.5f, 78f, w, 28f), line, _hud);
-        }
-
-        private static string HudLine(Aircraft ac)
-        {
-            bool aboard = Aboard(ac);
-            if (Service.IsOaClone(ac))
-            {
-                if (aboard)
-                    return "[Spectre WSO] dump / Y-N flares / Y-N lock. Eject punches the rear seat (decoy). You cannot bail.";
-                return "[OA WSO gone] decoy only. You cannot eject.";
-            }
-            if (Service.IsOaDClone(ac))
-            {
-                if (aboard)
-                    return "[Anvil WSO] dump / Y-N flares / Y-N lock. First eject punches WSO; second bails you out.";
-                return "[OA WSO gone] eject to bail.";
-            }
-            if (Service.IsOaEClone(ac))
-            {
-                if (aboard)
-                    return "[Wraith WSO] dump / Y-N flares / Y-N lock. Ground guns cannot hurt this airframe. First eject punches WSO; second bails you out.";
-                return "[OA WSO gone] ECM still on. Eject to bail.";
-            }
-            return null;
         }
 
         private static void TickDump(Aircraft ac)
