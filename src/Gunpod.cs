@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Reflection;
 using HarmonyLib;
@@ -78,24 +79,15 @@ namespace OA27Variant
             if (donor == null)
                 return;
             WeaponMount existing = FindMount(CloneKey);
-            if (existing != null)
+            if (existing != null && Service.MountIsNetworked(existing))
             {
                 _pod = existing;
                 return;
             }
-            WeaponMount clone = UnityEngine.Object.Instantiate(donor);
-            if (clone == null)
-            {
-                _pod = donor;
-                return;
-            }
-            clone.hideFlags = HideFlags.HideAndDontSave;
-            clone.jsonKey = CloneKey;
-            clone.mountName = Display;
-            clone.dontAutomaticallyAddToEncyclopedia = false;
-            _pod = clone;
+            _pod = donor;
+            Service.RegisterNetworkMount(donor);
             if (Plugin.Log != null)
-                Plugin.Log.LogInfo("30mm swivel gun pod cloned as " + CloneKey);
+                Plugin.Log.LogInfo("30mm swivel gun pod uses encyclopedia " + DonorKey);
         }
 
         private static WeaponMount FindMount(string key)
@@ -138,7 +130,8 @@ namespace OA27Variant
 
         private static void InjectLive()
         {
-            _nextInject = Time.unscaledTime + 15f;
+            _nextInject = Time.unscaledTime + 45f;
+            Service.SnapshotOaDonorLoadouts();
             List<Aircraft> all = null;
             try { all = UnitRegistry.allAircraft; }
             catch { all = null; }
@@ -148,6 +141,9 @@ namespace OA27Variant
             {
                 Aircraft ac = all[i];
                 if (ac == null || ac.weaponManager == null)
+                    continue;
+                if (!Service.IsOaFamilyClone(ac) && !Service.IsOaHangarPreview(ac)
+                    && !Service.IsOaPowered(ac))
                     continue;
                 InjectManager(ac.weaponManager);
             }
@@ -164,8 +160,13 @@ namespace OA27Variant
             catch { ac = null; }
             if (ac == null)
                 return;
+            if (!Service.IsOaFamilyClone(ac) && !Service.IsOaHangarPreview(ac)
+                && !Service.IsOaPowered(ac)
+                && !Service.IsOaFamilyDef(LoadoutLock.ActiveSpawnDef()))
+                return;
+            Service.DetachOaHardpoints(ac);
             for (int i = 0; i < wm.hardpointSets.Length; i++)
-                OfferOnSet(wm.hardpointSets[i]);
+                OfferOnSet(wm.hardpointSets[i], ac);
         }
 
         internal static void OfferOnSet(HardpointSet hs)
@@ -177,6 +178,9 @@ namespace OA27Variant
         {
             if (hs == null || IsNavalHardpoint(hs))
                 return;
+            if (!Service.IsOaLoadoutContext(ac, hs))
+                return;
+            Service.MergeOaStock(hs, ac);
             if (hs.weaponOptions == null)
                 hs.weaponOptions = new List<WeaponMount>(8);
             OfferMount(hs.weaponOptions, Pod);
@@ -187,18 +191,32 @@ namespace OA27Variant
         {
             if (list == null || hs == null)
                 return;
-            if (Service.IsOaLoadoutContext(null, hs))
+            Aircraft ac = LoadoutLock.FindAircraft(hs);
+            if (ac == null)
+                ac = LoadoutLock.SelectorAircraft;
+            if (!Service.IsOaLoadoutContext(ac, hs))
             {
-                if (hs.weaponOptions == null)
-                    hs.weaponOptions = new List<WeaponMount>(8);
-                for (int i = 0; i < hs.weaponOptions.Count; i++)
-                {
-                    WeaponMount m = hs.weaponOptions[i];
-                    if (m != null && !ListHas(list, m))
-                        list.Add(m);
-                }
+                OfferMount(list, Pod);
+                OfferMount(list, Kh38);
+                return;
             }
-            OfferOnSet(hs);
+            Service.MergeOaStock(hs, ac);
+            Service.MergeLoadoutSlotsIntoHardpoints(ac);
+            if (hs.weaponOptions == null)
+                hs.weaponOptions = new List<WeaponMount>(8);
+            int i;
+            for (i = 0; i < hs.weaponOptions.Count; i++)
+            {
+                WeaponMount m = hs.weaponOptions[i];
+                if (m == null)
+                    continue;
+                Service.PrepareStockMount(m);
+                if (string.IsNullOrEmpty(m.mountName) && !string.IsNullOrEmpty(m.jsonKey))
+                    m.mountName = m.jsonKey;
+                if (!string.IsNullOrEmpty(m.mountName) && !ListHas(list, m))
+                    list.Add(m);
+            }
+            OfferOnSet(hs, ac);
             OfferMount(list, Pod);
             OfferMount(list, Kh38);
         }
@@ -224,6 +242,11 @@ namespace OA27Variant
         {
             if (list == null || mount == null)
                 return;
+            mount = Service.ResolveNetworkMount(mount);
+            if (mount == null)
+                return;
+            if (string.IsNullOrEmpty(mount.mountName) && !string.IsNullOrEmpty(mount.jsonKey))
+                mount.mountName = mount.jsonKey;
             if (ListHas(list, mount))
                 return;
             list.Add(mount);
@@ -379,6 +402,67 @@ namespace OA27Variant
             if (aircraft != null && aircraft.weaponManager != null)
                 GunpodInject.InjectManager(aircraft.weaponManager);
             GunpodInject.OfferOnSet(hardpointSet, aircraft);
+        }
+    }
+
+    [HarmonyPatch(typeof(WeaponSelector), "SetValue")]
+    internal static class Patch_OA27C_SetValueByKey
+    {
+        private static readonly FieldInfo DropdownOptionsField =
+            AccessTools.Field(typeof(WeaponSelector), "dropdownOptions");
+
+        [HarmonyPrefix]
+        [HarmonyPriority(Priority.First)]
+        private static void Prefix(WeaponSelector __instance, ref WeaponMount weaponMount)
+        {
+            if (weaponMount == null || __instance == null || DropdownOptionsField == null)
+                return;
+            object raw = null;
+            try { raw = DropdownOptionsField.GetValue(__instance); }
+            catch { raw = null; }
+            IList list = raw as IList;
+            if (list == null)
+                return;
+            string key = weaponMount.jsonKey;
+            int i;
+            for (i = 0; i < list.Count; i++)
+            {
+                object item = list[i];
+                if (item == null)
+                    continue;
+                FieldInfo item2 = item.GetType().GetField("Item2");
+                object boxed = null;
+                if (item2 != null)
+                {
+                    try { boxed = item2.GetValue(item); }
+                    catch { boxed = null; }
+                }
+                else
+                {
+                    PropertyInfo prop = item.GetType().GetProperty("Item2");
+                    if (prop != null)
+                    {
+                        try { boxed = prop.GetValue(item, null); }
+                        catch { boxed = null; }
+                    }
+                }
+                WeaponMount m = boxed as WeaponMount;
+                if (m == null)
+                    continue;
+                if (object.ReferenceEquals(m, weaponMount))
+                    return;
+                if (!string.IsNullOrEmpty(key)
+                    && string.Equals(m.jsonKey, key, StringComparison.OrdinalIgnoreCase))
+                {
+                    weaponMount = m;
+                    return;
+                }
+                if (Service.IsInternal20(weaponMount) && Service.IsInternal20(m))
+                {
+                    weaponMount = m;
+                    return;
+                }
+            }
         }
     }
 

@@ -63,6 +63,19 @@ namespace OA27Variant
             return Service.HasOaWso(ac);
         }
 
+        private static int _aboardFrame = -1;
+        private static bool _aboardCached;
+
+        internal static bool CachedLocalAboard()
+        {
+            int f = Time.frameCount;
+            if (f == _aboardFrame)
+                return _aboardCached;
+            _aboardFrame = f;
+            _aboardCached = LocalAboard();
+            return _aboardCached;
+        }
+
         internal static bool LocalAboard()
         {
             Aircraft ac;
@@ -265,13 +278,15 @@ namespace OA27Variant
             int id = ac.GetInstanceID();
             float now = Time.unscaledTime;
             float due;
-            if (NextFlare.TryGetValue(id, out due) && now < due)
+            if (!NextFlare.TryGetValue(id, out due))
+                due = 0f;
+            if (now < due)
                 return;
+            NextFlare[id] = now + FlareGap;
             if (now < _flareDenyUntil)
                 return;
             if (!InboundMissile(ac))
                 return;
-            NextFlare[id] = now + FlareGap;
             StartAsk(AskKind.Flares, ac, null);
         }
 
@@ -282,8 +297,11 @@ namespace OA27Variant
             int id = ac.GetInstanceID();
             float now = Time.unscaledTime;
             float due;
-            if (NextCue.TryGetValue(id, out due) && now < due)
+            if (!NextCue.TryGetValue(id, out due))
+                due = 0f;
+            if (now < due)
                 return;
+            NextCue[id] = now + CueGap;
             if (now < _lockDenyUntil)
                 return;
             if (HasPlayerLock(ac))
@@ -291,7 +309,6 @@ namespace OA27Variant
             Unit pick = NearestHostile(ac);
             if (pick == null)
                 return;
-            NextCue[id] = now + CueGap;
             StartAsk(AskKind.Lock, ac, pick);
         }
 
@@ -452,7 +469,7 @@ namespace OA27Variant
                         continue;
                     if (IsOurShot(m, ac))
                         continue;
-                    if (m.GetComponentInParent<Aircraft>() != null)
+                    if (MissileStillOnPylon(m))
                         continue;
                     if (AimedAt(m, ac))
                         return true;
@@ -483,7 +500,7 @@ namespace OA27Variant
                         continue;
                     if (IsOurShot(m, ac))
                         continue;
-                    if (m.GetComponentInParent<Aircraft>() != null)
+                    if (MissileStillOnPylon(m))
                         continue;
                     if (!AimedAt(m, ac))
                         continue;
@@ -510,7 +527,7 @@ namespace OA27Variant
                         Scratch.Add(m);
                 }
             }
-            if (Scratch.Count > 0)
+            if (units != null)
                 return;
             Missile[] all = null;
             try { all = UnityEngine.Object.FindObjectsOfType<Missile>(); }
@@ -521,6 +538,23 @@ namespace OA27Variant
             {
                 if (all[i] != null)
                     Scratch.Add(all[i]);
+            }
+        }
+
+        private static bool MissileStillOnPylon(Missile m)
+        {
+            if (m == null)
+                return true;
+            try
+            {
+                Transform xf = m.transform;
+                if (xf == null || xf.parent == null)
+                    return false;
+                return true;
+            }
+            catch
+            {
+                return true;
             }
         }
 
@@ -608,15 +642,21 @@ namespace OA27Variant
     {
         [HarmonyPrefix]
         [HarmonyPriority(Priority.First)]
-        private static void Prefix(ref int iterations)
+        private static void Prefix(GameObject gun, ref int iterations)
         {
-            if (!OaWso.LocalAboard())
+            if (gun == null || iterations >= LeadItersHeld)
                 return;
-            if (iterations < LeadItersHeld)
-                iterations = LeadItersHeld;
+            if (!OaWso.CachedLocalAboard())
+                return;
+            Aircraft local;
+            if (!GameManager.GetLocalAircraft(out local) || local == null)
+                return;
+            if (!object.ReferenceEquals(gun, local.gameObject))
+                return;
+            iterations = LeadItersHeld;
         }
 
-        private const int LeadItersHeld = 12;
+        private const int LeadItersHeld = 5;
     }
 
     [HarmonyPatch(typeof(GLOC), "SimulateGLOC")]
@@ -626,7 +666,9 @@ namespace OA27Variant
         [HarmonyPriority(Priority.Last)]
         private static void Postfix(GLOC __instance, ref float __result)
         {
-            if (__instance == null)
+            if (__instance == null || __result >= 0.45f)
+                return;
+            if (!OaWso.CachedLocalAboard())
                 return;
             Pilot p = null;
             try { p = __instance.GetComponent<Pilot>(); }

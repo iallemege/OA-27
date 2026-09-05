@@ -14,7 +14,7 @@ This is a licensed derivative of [Aryx's OA-27 Cavalier](https://github.com/Aryx
 
 1. [BepInEx 5](https://github.com/BepInEx/BepInEx) in the game folder.
 2. [Blueprinter](https://github.com/nikkorap/NOBlueprinter-Releases/releases/latest) in `BepInEx/plugins` (recommended).
-3. Download **OA-27-1.1.10.zip** from [Releases](https://github.com/iallemege/OA-27/releases).
+3. Download **OA-27-1.1.18.zip** from [Releases](https://github.com/iallemege/OA-27/releases).
 4. Extract into the Nuclear Option game folder so these land in `BepInEx/plugins/`:
    - `OA-27Variant.dll`
    - `Aryx.OA-27.Cavalier_1.0.1.nobp`

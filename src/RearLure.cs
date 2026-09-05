@@ -416,7 +416,7 @@ namespace OA27Variant
                         _scratch.Add(m);
                 }
             }
-            if (_scratch.Count > 0)
+            if (units != null)
                 return;
             Missile[] all = null;
             try { all = Object.FindObjectsOfType<Missile>(); }

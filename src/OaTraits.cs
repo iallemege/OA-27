@@ -26,6 +26,8 @@ namespace OA27Variant
         private static readonly FieldInfo FuelCapField =
             AccessTools.Field(typeof(FuelTank), "fuelCapacity");
         private static readonly HashSet<int> FuelDone = new HashSet<int>();
+        private static readonly HashSet<int> FbwOnce = new HashSet<int>();
+        private static readonly Dictionary<int, byte> GBand = new Dictionary<int, byte>(8);
 
         internal static void OnSpawn(Aircraft ac)
         {
@@ -167,6 +169,20 @@ namespace OA27Variant
             catch { spd = 0f; }
             if (alt > StolCeilM || spd < 6f || spd > 95f)
                 return;
+            try
+            {
+                if (ac.gearDeployed)
+                    return;
+            }
+            catch { }
+            try
+            {
+                if (ac.IsLanded())
+                    return;
+            }
+            catch { }
+            if (Service.InHangarHold(ac))
+                return;
             float ge = 1f - Mathf.Clamp01(alt / StolCeilM);
             float slow = 1f - Mathf.Clamp01((spd - 18f) / 70f);
             if (slow < 0.15f)
@@ -188,18 +204,24 @@ namespace OA27Variant
             catch { fbw = null; }
             if (fbw == null)
                 return;
+            int id = ac.GetInstanceID();
+            if (FbwOnce.Add(id) && FbwTakeoff != null)
+            {
+                try { FbwTakeoff.SetValue(fbw, 22f); }
+                catch { }
+            }
             float alt = 80f;
             try { alt = ac.radarAlt; }
             catch { alt = 80f; }
-            bool low = alt < LowGCeilM;
+            byte want = alt < LowGCeilM ? (byte)1 : (byte)0;
+            byte had;
+            if (GBand.TryGetValue(id, out had) && had == want)
+                return;
+            GBand[id] = want;
+            bool low = want == 1;
             if (FbwGLimit != null)
             {
                 try { FbwGLimit.SetValue(fbw, low ? 16f : 9f); }
-                catch { }
-            }
-            if (FbwTakeoff != null)
-            {
-                try { FbwTakeoff.SetValue(fbw, 22f); }
                 catch { }
             }
             if (FbwAlpha != null && low)

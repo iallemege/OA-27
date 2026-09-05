@@ -16,6 +16,7 @@ namespace OA27Variant
         internal const string EncDescription =
             "MiG-15S is a fighter that have modernization to work perfect in the 2080s, it have upgrade  all parts from the original version , because of IAL Design Bureau's modify,the engine of MIG-15 has change to IES-200 and add suicide nuclear bomb to do the Kamikaze work. Drone means cockpit canopy was welded shut.";
         internal const string OaDonorKey = "Aryx_PropAttacker1";
+        internal const string Internal20Key = "Aryx_PropAttacker1_20mm_Internal";
         internal const string OaJsonKey = "Aryx_OA27_C";
         internal const string OaDisplayName = "OA-27C Spectre";
         internal const string OaShortName = "OA-27C";
@@ -74,6 +75,8 @@ namespace OA27Variant
             AccessTools.Field(typeof(UnitPart), "impactDamage");
         private static readonly FieldInfo UnitStructural =
             AccessTools.Field(typeof(UnitPart), "structuralThreshold");
+        private static readonly FieldInfo MountDisabledField =
+            AccessTools.Field(typeof(WeaponMount), "disabled");
         private static readonly FieldInfo ImpactThreshold =
             AccessTools.Field(typeof(ImpactDamage), "threshold");
         private static readonly FieldInfo ImpactMultiplier =
@@ -84,6 +87,15 @@ namespace OA27Variant
             AccessTools.Field(typeof(Aircraft), "ejected");
         private static readonly FieldInfo PilotNumberField =
             AccessTools.Field(typeof(Pilot), "pilotNumber");
+        private static readonly FieldInfo PlayerStatePilot =
+            AccessTools.Field(typeof(PilotBaseState), "pilot");
+        private static readonly FieldInfo PlayerStateRewired =
+            AccessTools.Field(typeof(PilotPlayerState), "player");
+        private static readonly FieldInfo GameManagerPlayerInput =
+            AccessTools.Field(typeof(GameManager), "playerInput");
+        private static readonly PropertyInfo GameManagerPlayerInputProp =
+            AccessTools.Property(typeof(GameManager), "playerInput");
+        private static MethodInfo _rewiredButtonDown;
         private static readonly FieldInfo PilotSeatField =
             AccessTools.Field(typeof(Pilot), "ejectionSeat");
         private static readonly FieldInfo MapBuildingSetField =
@@ -219,6 +231,15 @@ namespace OA27Variant
         private static float _fuzeArmedAt;
         private static bool _hangarPreviewSpawn;
         private static Aircraft _hangarPreview;
+        private static bool _spawnBind;
+        private static Aircraft _ejectIntentAc;
+        private static float _ejectIntentUntil;
+        private static Aircraft _switchAway;
+        private static List<WeaponMount>[] _oaStockSets;
+        private static string[] _oaStockNames;
+        private static int _oaStockMounts;
+        private static bool _oaStockLogged;
+        private static float _nextStockScan;
 
         internal static bool IsOurs(Aircraft ac)
         {
@@ -229,11 +250,13 @@ namespace OA27Variant
                 return false;
             int id = ac.GetInstanceID();
             byte cached;
-            if (OursCache.TryGetValue(id, out cached) && cached != 0)
-                return true;
+            if (OursCache.TryGetValue(id, out cached))
+                return cached == 1;
             bool ours = IsOursDef(def);
             if (ours)
                 OursCache[id] = 1;
+            else if (!IsDonorDef(def))
+                OursCache[id] = 2;
             return ours;
         }
 
@@ -347,6 +370,8 @@ namespace OA27Variant
                 return true;
             AircraftDefinition cur = ac.definition as AircraftDefinition;
             if (!IsDonorDef(cur))
+                return false;
+            if (!MayRetargetDonorHull(ac))
                 return false;
             return IsOaFamilyDef(LoadoutLock.ActiveSpawnDef());
         }
@@ -558,27 +583,41 @@ namespace OA27Variant
         {
             if (IsOaFamilyClone(ac) || IsOaHangarPreview(ac))
                 return true;
-            AircraftDefinition sel = LoadoutLock.ActiveSpawnDef();
-            if (IsOaFamilyDef(sel))
-            {
-                Aircraft owner = ac != null ? ac : LoadoutLock.FindAircraft(hs);
-                if (owner == null)
-                    owner = LoadoutLock.SelectorAircraft;
-                if (owner == null || IsOaFamilyClone(owner) || IsOaHangarPreview(owner))
-                    return true;
-                return false;
-            }
-            if (hs == null)
-                return false;
-            Aircraft fromSet = LoadoutLock.FindAircraft(hs);
-            if (IsOaFamilyClone(fromSet) || IsOaHangarPreview(fromSet))
+            Aircraft owner = ac != null ? ac : LoadoutLock.FindAircraft(hs);
+            if (owner == null)
+                owner = LoadoutLock.SelectorAircraft;
+            if (IsOaFamilyClone(owner) || IsOaHangarPreview(owner))
                 return true;
-            return false;
+            AircraftDefinition sel = LoadoutLock.ActiveSpawnDef();
+            if (!IsOaFamilyDef(sel))
+                return false;
+            if (owner == null)
+                return false;
+            if (IsDonorDef(owner.definition as AircraftDefinition))
+                return true;
+            return IsOaFamilyClone(owner);
         }
 
         internal static bool IsOaHangarPreview(Aircraft ac)
         {
             if (ac == null)
+                return false;
+            if (_hangarPreviewSpawn)
+            {
+                try
+                {
+                    if (!ac.networked)
+                    {
+                        return IsOaFamilyClone(ac)
+                            || IsDonorDef(ac.definition as AircraftDefinition);
+                    }
+                }
+                catch { }
+                return false;
+            }
+            if (_hangarPreview != null && object.ReferenceEquals(ac, _hangarPreview))
+                return true;
+            if (IsLiveAircraft(ac))
                 return false;
             if (IsOaFamilyClone(ac))
                 return true;
@@ -1055,7 +1094,10 @@ namespace OA27Variant
             if (Encyclopedia.Lookup != null)
                 Encyclopedia.Lookup[key] = def;
             if (oa)
+            {
                 AdoptOaLiveries(def);
+                AdoptOaStandardLoadouts(def);
+            }
             else
             {
                 StripGunsFromDefinition(def);
@@ -1158,6 +1200,10 @@ namespace OA27Variant
                     false);
             if (_oaClone != null && _oaDClone != null && _oaEClone != null)
             {
+                SnapshotOaDonorLoadouts();
+                AdoptOaStandardLoadouts(_oaClone);
+                AdoptOaStandardLoadouts(_oaDClone);
+                AdoptOaStandardLoadouts(_oaEClone);
                 if (!_cloneReadyLogged && Plugin.Log != null)
                 {
                     _cloneReadyLogged = true;
@@ -1229,6 +1275,8 @@ namespace OA27Variant
                 clone.aircraftInfo.maxSpeed = SpeedCapMps;
             ApplyEncyclopedia(clone);
             RegisterClone(clone);
+            SnapshotOaDonorLoadouts();
+            AdoptOaStandardLoadouts(clone);
             if (Plugin.Log != null)
             {
                 string tag = mig ? "MiG-15S" : "OA-27C";
@@ -1297,6 +1345,8 @@ namespace OA27Variant
             AircraftDefinition cur = ac.definition as AircraftDefinition;
             if (!IsDonorDef(cur))
                 return;
+            if (!MayRetargetDonorHull(ac))
+                return;
             AircraftDefinition want = LoadoutLock.ActiveSpawnDef();
             if (want == null || !IsOursDef(want) || IsDonorDef(want))
                 return;
@@ -1310,6 +1360,239 @@ namespace OA27Variant
             ApplyEncyclopedia(want);
             try { unit.NetworkunitName = want.unitName; }
             catch { }
+        }
+
+        private static bool MayRetargetDonorHull(Aircraft ac)
+        {
+            if (ac == null)
+                return false;
+            if (_hangarPreviewSpawn)
+            {
+                try { return !ac.networked; }
+                catch { return true; }
+            }
+            if (_hangarPreview != null && object.ReferenceEquals(ac, _hangarPreview))
+                return true;
+            if (_spawnBind)
+                return true;
+            return IsLocalPlayerAircraft(ac);
+        }
+
+        internal static void BeginSpawnBind()
+        {
+            _spawnBind = true;
+        }
+
+        internal static void EndSpawnBind()
+        {
+            _spawnBind = false;
+        }
+
+        internal static void NotePlayerEjectIntent(Aircraft ac)
+        {
+            if (ac == null)
+                return;
+            _ejectIntentAc = ac;
+            _ejectIntentUntil = Time.unscaledTime + 0.35f;
+        }
+
+        internal static void NoteSwitchAway(Aircraft ac)
+        {
+            _switchAway = ac;
+        }
+
+        internal static void ClearSwitchAway()
+        {
+            _switchAway = null;
+        }
+
+        private static bool ConsumePlayerEjectIntent(Aircraft ac)
+        {
+            if (ac == null || _ejectIntentAc == null)
+                return false;
+            if (!object.ReferenceEquals(ac, _ejectIntentAc))
+                return false;
+            if (Time.unscaledTime > _ejectIntentUntil)
+                return false;
+            _ejectIntentAc = null;
+            return true;
+        }
+
+        internal static void NoteEjectIfPressed(object playerState)
+        {
+            if (playerState == null)
+                return;
+            Aircraft ac = AircraftOfPlayerState(playerState);
+            if (ac == null)
+                return;
+            if (!RewiredButtonDown(playerState, "Eject"))
+                return;
+            NotePlayerEjectIntent(ac);
+        }
+
+        private static Aircraft AircraftOfPlayerState(object playerState)
+        {
+            if (playerState == null || PlayerStatePilot == null)
+                return null;
+            Pilot p = null;
+            try { p = PlayerStatePilot.GetValue(playerState) as Pilot; }
+            catch { p = null; }
+            if (p == null)
+                return null;
+            try { return p.aircraft; }
+            catch { return null; }
+        }
+
+        private static bool RewiredButtonDown(object playerState, string action)
+        {
+            if (playerState == null || string.IsNullOrEmpty(action) || PlayerStateRewired == null)
+                return false;
+            object pi = null;
+            try { pi = PlayerStateRewired.GetValue(playerState); }
+            catch { pi = null; }
+            return RewiredButtonDownOn(pi, action);
+        }
+
+        private static bool PlayerEjectHeldNow()
+        {
+            object pi = null;
+            if (GameManagerPlayerInput != null)
+            {
+                try { pi = GameManagerPlayerInput.GetValue(null); }
+                catch { pi = null; }
+            }
+            if (pi == null && GameManagerPlayerInputProp != null)
+            {
+                try { pi = GameManagerPlayerInputProp.GetValue(null, null); }
+                catch { pi = null; }
+            }
+            return RewiredButtonDownOn(pi, "Eject");
+        }
+
+        private static bool RewiredButtonDownOn(object pi, string action)
+        {
+            if (pi == null || string.IsNullOrEmpty(action))
+                return false;
+            if (_rewiredButtonDown == null)
+            {
+                try
+                {
+                    _rewiredButtonDown = AccessTools.Method(
+                        pi.GetType(),
+                        "GetButtonDown",
+                        new Type[] { typeof(string) });
+                }
+                catch { _rewiredButtonDown = null; }
+            }
+            if (_rewiredButtonDown == null)
+                return false;
+            try
+            {
+                object v = _rewiredButtonDown.Invoke(pi, new object[] { action });
+                return v is bool && (bool)v;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        internal static bool MountIsNetworked(WeaponMount mount)
+        {
+            if (mount == null)
+                return false;
+            try
+            {
+                INetworkDefinition nd = mount;
+                if (nd.LookupIndex.HasValue)
+                    return true;
+            }
+            catch { }
+            Encyclopedia enc = null;
+            try { enc = Encyclopedia.i; }
+            catch { enc = null; }
+            if (enc == null || enc.IndexLookup == null)
+                return false;
+            try { return enc.IndexLookup.Contains(mount); }
+            catch { return false; }
+        }
+
+        internal static void RegisterNetworkMount(WeaponMount mount)
+        {
+            if (mount == null)
+                return;
+            Encyclopedia enc = null;
+            try { enc = Encyclopedia.i; }
+            catch { enc = null; }
+            if (enc != null && enc.weaponMounts != null && !enc.weaponMounts.Contains(mount))
+                enc.weaponMounts.Add(mount);
+            try
+            {
+                if (Encyclopedia.WeaponLookup != null && !string.IsNullOrEmpty(mount.jsonKey))
+                    Encyclopedia.WeaponLookup[mount.jsonKey] = mount;
+            }
+            catch { }
+            if (enc == null || enc.IndexLookup == null)
+                return;
+            try
+            {
+                if (!enc.IndexLookup.Contains(mount))
+                {
+                    enc.IndexLookup.Add(mount);
+                    INetworkDefinition nd = mount;
+                    nd.LookupIndex = enc.IndexLookup.Count - 1;
+                }
+                else
+                {
+                    INetworkDefinition nd = mount;
+                    if (!nd.LookupIndex.HasValue)
+                    {
+                        int idx = enc.IndexLookup.IndexOf(mount);
+                        if (idx >= 0)
+                            nd.LookupIndex = idx;
+                    }
+                }
+            }
+            catch { }
+        }
+
+        internal static WeaponMount ResolveNetworkMount(WeaponMount mount)
+        {
+            if (mount == null)
+                return null;
+            if (MountIsNetworked(mount))
+                return mount;
+            string key = mount.jsonKey;
+            if (string.Equals(key, GunpodInject.CloneKey, StringComparison.OrdinalIgnoreCase)
+                || GunpodInject.IsPod(mount))
+                key = GunpodInject.DonorKey;
+            WeaponMount byKey = FindMountByKey(key);
+            if (byKey != null && MountIsNetworked(byKey))
+                return byKey;
+            if (!string.Equals(key, GunpodInject.DonorKey, StringComparison.OrdinalIgnoreCase))
+            {
+                WeaponMount donorPod = FindMountByKey(GunpodInject.DonorKey);
+                if (donorPod != null && GunpodInject.IsPod(mount) && MountIsNetworked(donorPod))
+                    return donorPod;
+            }
+            RegisterNetworkMount(mount);
+            if (MountIsNetworked(mount))
+                return mount;
+            return byKey != null ? byKey : mount;
+        }
+
+        internal static void SanitizeLoadout(NuclearOption.SavedMission.Loadout loadout)
+        {
+            if (loadout == null || loadout.weapons == null)
+                return;
+            int i;
+            for (i = 0; i < loadout.weapons.Count; i++)
+            {
+                WeaponMount m = loadout.weapons[i];
+                if (m == null)
+                    continue;
+                loadout.weapons[i] = ResolveNetworkMount(m);
+            }
         }
 
         internal static void AdoptDonorLiveries(AircraftDefinition kam)
@@ -1414,9 +1697,7 @@ namespace OA27Variant
             }
             if (!IsLiveAircraft(ac))
                 return;
-            if (oa)
-                AdoptOaLiveries(ac.definition as AircraftDefinition);
-            else
+            if (!oa)
                 AdoptDonorLiveries(ac.definition as AircraftDefinition);
             if (!oa)
                 Ab4Fx.Ensure(ac);
@@ -1424,7 +1705,8 @@ namespace OA27Variant
                 FlightFix.Apply(ac);
             if (oa)
             {
-                ApplyPropPower(ac);
+                if (!PowerDone.Contains(id))
+                    ApplyPropPower(ac);
                 OaTraits.Tick(ac);
                 OaWso.Tick(ac);
                 if (OaRearEjected.Contains(id) && IsOaClone(ac) && !IsOaConventionalClone(ac))
@@ -1517,10 +1799,7 @@ namespace OA27Variant
                 return;
             Aircraft ac = te.aircraft;
             if (ac == null)
-            {
-                try { ac = te.GetComponentInParent<Aircraft>(); }
-                catch { ac = null; }
-            }
+                return;
             if (!IsOaPowered(ac))
                 return;
             DoubleTurbine(te, ac);
@@ -1531,8 +1810,10 @@ namespace OA27Variant
             if (ac == null)
                 return 0f;
             int id = ac.GetInstanceID();
-            ApplyPropPower(ac);
             float cached;
+            if (CachedPowerKw.TryGetValue(id, out cached) && cached >= 1f)
+                return cached;
+            ApplyPropPower(ac);
             if (CachedPowerKw.TryGetValue(id, out cached) && cached >= 1f)
                 return cached;
             return 0f;
@@ -1763,6 +2044,21 @@ namespace OA27Variant
 
         internal static bool HandleOaPartialEject(Aircraft ac)
         {
+            if (ac == null)
+                return false;
+            if (!IsOaFamilyClone(ac) && !IsOaPowered(ac))
+                return false;
+            if (!IsLiveAircraft(ac))
+                return true;
+            if (_switchAway != null && object.ReferenceEquals(ac, _switchAway))
+                return false;
+            if (!IsLocalPlayerAircraft(ac))
+                return false;
+            bool asked = ConsumePlayerEjectIntent(ac);
+            if (!asked)
+                asked = PlayerEjectHeldNow();
+            if (!asked)
+                return true;
             if (IsOaConventionalClone(ac))
             {
                 if (OaRearEjected.Contains(ac.GetInstanceID()))
@@ -1770,9 +2066,8 @@ namespace OA27Variant
                 DoOaRearEject(ac);
                 return true;
             }
-            if (!IsOaClone(ac))
-                return false;
             DoOaRearEject(ac);
+            NotifyCannotEject(ac);
             return true;
         }
 
@@ -1859,21 +2154,29 @@ namespace OA27Variant
 
         private static void JettisonOaCanopy(Aircraft ac)
         {
+            if (ac == null)
+                return;
+            Pilot player = FindPlayerPilot(ac);
             Canopy[] cans = null;
             try { cans = ac.GetComponentsInChildren<Canopy>(true); }
             catch { cans = null; }
-            if (cans != null)
+            if (cans == null)
+                return;
+            float playerZ = player != null ? LocalZ(ac, player.transform) : 0f;
+            for (int i = 0; i < cans.Length; i++)
             {
-                for (int i = 0; i < cans.Length; i++)
-                {
-                    if (cans[i] == null)
-                        continue;
-                    try { cans[i].Eject(); }
-                    catch { }
-                }
+                Canopy c = cans[i];
+                if (c == null || c.transform == null)
+                    continue;
+                if (IsProtectedFlightHardware(c.transform, ac, player))
+                    continue;
+                if (player != null && UnderRoot(c.transform, player.transform))
+                    continue;
+                if (player != null && LocalZ(ac, c.transform) >= playerZ - 0.15f)
+                    continue;
+                try { c.Eject(); }
+                catch { }
             }
-            try { ac.RpcJettisonCanopy(); }
-            catch { }
         }
 
         private static Pilot[] AllPilots(Aircraft ac)
@@ -2054,6 +2357,8 @@ namespace OA27Variant
                 if (player != null && (object.ReferenceEquals(t, player.transform)
                     || UnderRoot(t, player.transform)))
                     continue;
+                if (IsProtectedFlightHardware(t, ac, player))
+                    continue;
                 if (!CrewNameHit(t.name))
                     continue;
                 if (t.childCount > 48)
@@ -2072,10 +2377,7 @@ namespace OA27Variant
         {
             if (string.IsNullOrEmpty(n))
                 return false;
-            return n.IndexOf("wso", StringComparison.OrdinalIgnoreCase) >= 0
-                || n.IndexOf("rear", StringComparison.OrdinalIgnoreCase) >= 0
-                || n.IndexOf("back", StringComparison.OrdinalIgnoreCase) >= 0
-                || n.IndexOf("gunner", StringComparison.OrdinalIgnoreCase) >= 0
+            if (n.IndexOf("wso", StringComparison.OrdinalIgnoreCase) >= 0
                 || n.IndexOf("copilot", StringComparison.OrdinalIgnoreCase) >= 0
                 || n.IndexOf("co-pilot", StringComparison.OrdinalIgnoreCase) >= 0
                 || n.IndexOf("rio", StringComparison.OrdinalIgnoreCase) >= 0
@@ -2084,7 +2386,16 @@ namespace OA27Variant
                 || n.IndexOf("seat 2", StringComparison.OrdinalIgnoreCase) >= 0
                 || n.IndexOf("pilot (1)", StringComparison.OrdinalIgnoreCase) >= 0
                 || n.IndexOf("pilot_1", StringComparison.OrdinalIgnoreCase) >= 0
-                || n.IndexOf("pilot1", StringComparison.OrdinalIgnoreCase) >= 0;
+                || n.IndexOf("pilot1", StringComparison.OrdinalIgnoreCase) >= 0)
+                return true;
+            bool rear = n.IndexOf("rear", StringComparison.OrdinalIgnoreCase) >= 0
+                || n.IndexOf("aft", StringComparison.OrdinalIgnoreCase) >= 0
+                || n.IndexOf("back", StringComparison.OrdinalIgnoreCase) >= 0;
+            if (!rear)
+                return false;
+            return n.IndexOf("seat", StringComparison.OrdinalIgnoreCase) >= 0
+                || n.IndexOf("pilot", StringComparison.OrdinalIgnoreCase) >= 0
+                || n.IndexOf("crew", StringComparison.OrdinalIgnoreCase) >= 0;
         }
 
         private static bool LooksLikeCrewVisual(Transform t)
@@ -2164,6 +2475,10 @@ namespace OA27Variant
                 seat = null;
             if (visual != null && player != null && UnderRoot(visual, player.transform))
                 visual = seat != null ? seat.transform : null;
+            if (visual != null && IsProtectedFlightHardware(visual, ac, player))
+                visual = seat != null && !IsProtectedFlightHardware(seat.transform, ac, player)
+                    ? seat.transform
+                    : null;
             if (visual == null && seat != null)
                 visual = seat.transform;
             if (visual == null && rear != null)
@@ -2261,6 +2576,8 @@ namespace OA27Variant
         private static void LaunchLoose(Aircraft ac, Transform xf, Vector3 vel, Pilot player)
         {
             if (ac == null || xf == null)
+                return;
+            if (IsProtectedFlightHardware(xf, ac, player))
                 return;
             if (player != null && (object.ReferenceEquals(xf, player.transform)
                 || UnderRoot(player.transform, xf)))
@@ -2581,6 +2898,46 @@ namespace OA27Variant
             return _dismountPrefab;
         }
 
+        private static bool IsProtectedFlightHardware(Transform xf, Aircraft ac, Pilot player)
+        {
+            if (xf == null)
+                return true;
+            if (ac != null && object.ReferenceEquals(xf, ac.transform))
+                return true;
+            if (player != null)
+            {
+                if (object.ReferenceEquals(xf, player.transform)
+                    || UnderRoot(xf, player.transform)
+                    || UnderRoot(player.transform, xf))
+                    return true;
+            }
+            string n = xf.name != null ? xf.name : string.Empty;
+            if (n.IndexOf("hud", StringComparison.OrdinalIgnoreCase) >= 0
+                || n.IndexOf("mfd", StringComparison.OrdinalIgnoreCase) >= 0
+                || n.IndexOf("cockpit", StringComparison.OrdinalIgnoreCase) >= 0
+                || n.IndexOf("camera", StringComparison.OrdinalIgnoreCase) >= 0
+                || n.IndexOf("gunsight", StringComparison.OrdinalIgnoreCase) >= 0
+                || n.IndexOf("boresight", StringComparison.OrdinalIgnoreCase) >= 0
+                || n.IndexOf("combiner", StringComparison.OrdinalIgnoreCase) >= 0
+                || n.IndexOf("canvas", StringComparison.OrdinalIgnoreCase) >= 0)
+                return true;
+            try
+            {
+                if (xf.GetComponent<Camera>() != null)
+                    return true;
+                if (xf.GetComponent<WeaponManager>() != null)
+                    return true;
+                if (xf.GetComponent<WeaponStation>() != null)
+                    return true;
+                if (xf.GetComponent<Turret>() != null)
+                    return true;
+                if (xf.GetComponent<Cockpit>() != null)
+                    return true;
+            }
+            catch { }
+            return false;
+        }
+
         internal static void KeepPlayerFlying(Aircraft ac)
         {
             KeepPlayerFlying(ac, false);
@@ -2605,9 +2962,7 @@ namespace OA27Variant
                 for (int i = 0; i < pilots.Length; i++)
                 {
                     Pilot p = pilots[i];
-                    if (p == null)
-                        continue;
-                    if (!p.playerControlled)
+                    if (p == null || !p.playerControlled)
                         continue;
                     try { p.ejected = false; }
                     catch { }
@@ -2615,38 +2970,6 @@ namespace OA27Variant
                     catch { }
                 }
             }
-            int id = ac.GetInstanceID();
-            if (!full && !FlyHudOnce.Add(id))
-                return;
-            FlyHudOnce.Add(id);
-            try
-            {
-                Player player;
-                if (GameManager.GetLocalPlayer(out player) && player != null)
-                {
-                    if (player.Aircraft == null || !object.ReferenceEquals(player.Aircraft, ac))
-                        player.SetAircraft(ac);
-                }
-            }
-            catch { }
-            try
-            {
-                FlightHud hud = SceneSingleton<FlightHud>.i;
-                if (hud != null)
-                    hud.SetAircraft(ac);
-            }
-            catch { }
-            try
-            {
-                CombatHUD combat = SceneSingleton<CombatHUD>.i;
-                if (combat != null)
-                    combat.SetAircraft(ac);
-            }
-            catch { }
-            try { CameraStateManager.cameraMode = CameraMode.cockpit; }
-            catch { }
-            RestoreWeapons(ac);
-            HideLeftoverRearCrew(ac, FindPlayerPilot(ac));
         }
 
         private static void RestoreWeapons(Aircraft ac)
@@ -2675,21 +2998,544 @@ namespace OA27Variant
 
         internal static void DetachOaHardpoints(Aircraft ac)
         {
-            if (ac == null || !IsOaFamilyClone(ac))
+            if (ac == null)
+                return;
+            if (!IsOaFamilyClone(ac) && !IsOaHangarPreview(ac) && !IsOaPowered(ac))
                 return;
             int id = ac.GetInstanceID();
-            if (!CatalogDetached.Add(id))
-                return;
+            bool first = CatalogDetached.Add(id);
+            SnapshotOaDonorLoadouts();
             WeaponManager wm = ac.weaponManager;
             if (wm == null || wm.hardpointSets == null)
                 return;
             for (int i = 0; i < wm.hardpointSets.Length; i++)
             {
                 HardpointSet hs = wm.hardpointSets[i];
-                if (hs == null || hs.weaponOptions == null)
+                if (hs == null)
                     continue;
-                hs.weaponOptions = new List<WeaponMount>(hs.weaponOptions);
+                if (first)
+                    DetachHardpointList(hs);
+                MergeOaStock(hs, ac);
             }
+            MergeLoadoutSlotsIntoHardpoints(ac);
+        }
+
+        private static void DetachHardpointList(HardpointSet hs)
+        {
+            if (hs == null)
+                return;
+            if (hs.weaponOptions == null)
+                hs.weaponOptions = new List<WeaponMount>(8);
+            else
+                hs.weaponOptions = new List<WeaponMount>(hs.weaponOptions);
+        }
+
+        internal static void SnapshotOaDonorLoadouts()
+        {
+            if (_oaStockMounts > 0)
+                return;
+            if (Time.unscaledTime < _nextStockScan)
+                return;
+            _nextStockScan = Time.unscaledTime + 4f;
+            AircraftDefinition donor = FindDonorDef();
+            if (donor != null)
+                TrySnapshotWeaponManager(WeaponManagerOf(donor));
+            List<Aircraft> live = null;
+            try { live = UnitRegistry.allAircraft; }
+            catch { live = null; }
+            if (live == null)
+                return;
+            for (int i = 0; i < live.Count; i++)
+            {
+                Aircraft ac = live[i];
+                if (ac == null || ac.weaponManager == null)
+                    continue;
+                if (!IsDonorDef(ac.definition as AircraftDefinition))
+                    continue;
+                TrySnapshotWeaponManager(ac.weaponManager);
+            }
+        }
+
+        private static WeaponManager WeaponManagerOf(AircraftDefinition def)
+        {
+            if (def == null || def.unitPrefab == null)
+                return null;
+            WeaponManager wm = null;
+            try { wm = def.unitPrefab.GetComponentInChildren<WeaponManager>(true); }
+            catch { wm = null; }
+            return wm;
+        }
+
+        private static void TrySnapshotWeaponManager(WeaponManager wm)
+        {
+            if (wm == null || wm.hardpointSets == null || wm.hardpointSets.Length == 0)
+                return;
+            int n = 0;
+            int i;
+            for (i = 0; i < wm.hardpointSets.Length; i++)
+                n += CountStockMounts(wm.hardpointSets[i]);
+            if (n <= _oaStockMounts)
+                return;
+            List<WeaponMount>[] sets = new List<WeaponMount>[wm.hardpointSets.Length];
+            string[] names = new string[wm.hardpointSets.Length];
+            for (i = 0; i < wm.hardpointSets.Length; i++)
+            {
+                HardpointSet hs = wm.hardpointSets[i];
+                names[i] = hs != null ? hs.name : null;
+                sets[i] = CopyStockMounts(hs);
+            }
+            _oaStockSets = sets;
+            _oaStockNames = names;
+            _oaStockMounts = n;
+            if (!_oaStockLogged && Plugin.Log != null)
+            {
+                _oaStockLogged = true;
+                Plugin.Log.LogInfo("OA-27 stock catalog snapshot "
+                    + n.ToString() + " mounts across "
+                    + wm.hardpointSets.Length.ToString() + " hardpoints");
+            }
+            AdoptOaStandardLoadouts(_oaClone);
+            AdoptOaStandardLoadouts(_oaDClone);
+            AdoptOaStandardLoadouts(_oaEClone);
+        }
+
+        private static int CountStockMounts(HardpointSet hs)
+        {
+            if (hs == null || hs.weaponOptions == null)
+                return 0;
+            int n = 0;
+            int i;
+            for (i = 0; i < hs.weaponOptions.Count; i++)
+            {
+                WeaponMount m = hs.weaponOptions[i];
+                if (m == null || GunpodInject.IsOurExtra(m))
+                    continue;
+                n++;
+            }
+            return n;
+        }
+
+        private static List<WeaponMount> CopyStockMounts(HardpointSet hs)
+        {
+            List<WeaponMount> copy = new List<WeaponMount>(8);
+            if (hs == null || hs.weaponOptions == null)
+                return copy;
+            int i;
+            for (i = 0; i < hs.weaponOptions.Count; i++)
+            {
+                WeaponMount m = hs.weaponOptions[i];
+                if (m == null || GunpodInject.IsOurExtra(m))
+                    continue;
+                copy.Add(m);
+            }
+            return copy;
+        }
+
+        internal static void MergeOaStock(HardpointSet hs, Aircraft ac)
+        {
+            if (hs == null)
+                return;
+            if (!IsOaLoadoutContext(ac, hs))
+                return;
+            SnapshotOaDonorLoadouts();
+            List<WeaponMount> stock = StockForSet(hs, ac);
+            if (stock == null || stock.Count == 0)
+                return;
+            if (hs.weaponOptions == null)
+                hs.weaponOptions = new List<WeaponMount>(stock.Count + 4);
+            int i;
+            for (i = 0; i < stock.Count; i++)
+            {
+                WeaponMount m = stock[i];
+                if (m == null)
+                    continue;
+                if (ListHasMount(hs.weaponOptions, m))
+                    continue;
+                hs.weaponOptions.Add(m);
+            }
+        }
+
+        private static List<WeaponMount> StockForSet(HardpointSet hs, Aircraft ac)
+        {
+            if (_oaStockSets == null || _oaStockSets.Length == 0)
+                return null;
+            int idx = IndexOfHardpoint(ac, hs);
+            if (idx >= 0 && idx < _oaStockSets.Length && _oaStockSets[idx] != null)
+                return _oaStockSets[idx];
+            if (hs == null || string.IsNullOrEmpty(hs.name) || _oaStockNames == null)
+                return null;
+            int i;
+            for (i = 0; i < _oaStockNames.Length; i++)
+            {
+                if (string.Equals(_oaStockNames[i], hs.name, StringComparison.OrdinalIgnoreCase)
+                    && _oaStockSets[i] != null)
+                    return _oaStockSets[i];
+            }
+            return null;
+        }
+
+        private static int IndexOfHardpoint(Aircraft ac, HardpointSet hs)
+        {
+            if (ac == null)
+                ac = LoadoutLock.FindAircraft(hs);
+            if (ac == null)
+                ac = LoadoutLock.SelectorAircraft;
+            if (ac == null || ac.weaponManager == null || ac.weaponManager.hardpointSets == null
+                || hs == null)
+                return -1;
+            HardpointSet[] sets = ac.weaponManager.hardpointSets;
+            int i;
+            for (i = 0; i < sets.Length; i++)
+            {
+                if (object.ReferenceEquals(sets[i], hs))
+                    return i;
+            }
+            return -1;
+        }
+
+        internal static bool ListHasMount(List<WeaponMount> list, WeaponMount mount)
+        {
+            if (list == null || mount == null)
+                return false;
+            string key = mount.jsonKey;
+            int i;
+            for (i = 0; i < list.Count; i++)
+            {
+                WeaponMount cur = list[i];
+                if (cur == null)
+                    continue;
+                if (object.ReferenceEquals(cur, mount))
+                    return true;
+                if (!string.IsNullOrEmpty(key)
+                    && string.Equals(cur.jsonKey, key, StringComparison.OrdinalIgnoreCase))
+                    return true;
+            }
+            return false;
+        }
+
+        internal static void AdoptOaStandardLoadouts(AircraftDefinition clone)
+        {
+            if (!IsOaFamilyDef(clone) || clone.aircraftParameters == null)
+                return;
+            AircraftDefinition donor = FindDonorDef();
+            if (donor == null || donor.aircraftParameters == null
+                || object.ReferenceEquals(donor, clone))
+                return;
+            StandardLoadout[] src = donor.aircraftParameters.StandardLoadouts;
+            if (src == null || src.Length == 0)
+                return;
+            int srcN = CountPresetWeapons(src);
+            if (srcN <= 0)
+                return;
+            int dstN = CountPresetWeapons(clone.aircraftParameters.StandardLoadouts);
+            if (dstN < srcN)
+                clone.aircraftParameters.StandardLoadouts = src;
+            if (donor.aircraftParameters.loadouts != null
+                && (clone.aircraftParameters.loadouts == null
+                    || clone.aircraftParameters.loadouts.Count == 0
+                    || !ParamsHaveInternal20(clone.aircraftParameters)))
+                clone.aircraftParameters.loadouts = donor.aircraftParameters.loadouts;
+        }
+
+        internal static void MergeLoadoutSlotsIntoHardpoints(Aircraft ac)
+        {
+            if (ac == null || ac.weaponManager == null)
+                return;
+            AbsorbParamsOntoAircraft(ac, ac.definition as AircraftDefinition);
+            AbsorbParamsOntoAircraft(ac, FindDonorDef());
+            AbsorbParamsOntoAircraft(ac, LoadoutLock.ActiveSpawnDef());
+            PlaceInternal20(ac);
+        }
+
+        private static void AbsorbParamsOntoAircraft(Aircraft ac, AircraftDefinition def)
+        {
+            if (ac == null || def == null || def.aircraftParameters == null)
+                return;
+            AircraftParameters p = def.aircraftParameters;
+            if (p.loadouts != null)
+            {
+                int i;
+                for (i = 0; i < p.loadouts.Count; i++)
+                {
+                    NuclearOption.SavedMission.Loadout lo = p.loadouts[i];
+                    if (lo != null)
+                        PutWeaponsOnSets(ac.weaponManager, lo.weapons);
+                }
+            }
+            if (p.StandardLoadouts == null)
+                return;
+            int s;
+            for (s = 0; s < p.StandardLoadouts.Length; s++)
+            {
+                StandardLoadout sl = p.StandardLoadouts[s];
+                if (sl != null && sl.loadout != null)
+                    PutWeaponsOnSets(ac.weaponManager, sl.loadout.weapons);
+            }
+        }
+
+        private static void PutWeaponsOnSets(WeaponManager wm, List<WeaponMount> weapons)
+        {
+            if (wm == null || wm.hardpointSets == null || weapons == null)
+                return;
+            int n = weapons.Count;
+            if (n > wm.hardpointSets.Length)
+                n = wm.hardpointSets.Length;
+            int i;
+            for (i = 0; i < n; i++)
+            {
+                WeaponMount m = weapons[i];
+                if (m == null)
+                    continue;
+                m = ResolveNetworkMount(m);
+                if (m == null)
+                    continue;
+                HardpointSet hs = wm.hardpointSets[i];
+                if (hs == null)
+                    continue;
+                PrepareStockMount(m);
+                if (hs.weaponOptions == null)
+                    hs.weaponOptions = new List<WeaponMount>(8);
+                if (!ListHasMount(hs.weaponOptions, m))
+                    hs.weaponOptions.Add(m);
+            }
+        }
+
+        internal static void PlaceInternal20(Aircraft ac)
+        {
+            if (ac == null || ac.weaponManager == null || ac.weaponManager.hardpointSets == null)
+                return;
+            WeaponMount gun = FindInternal20();
+            if (gun == null)
+                return;
+            PrepareStockMount(gun);
+            HardpointSet[] sets = ac.weaponManager.hardpointSets;
+            bool placed = false;
+            int i;
+            for (i = 0; i < sets.Length; i++)
+            {
+                HardpointSet hs = sets[i];
+                if (hs == null)
+                    continue;
+                if (!SetWantsInternal20(hs, i, ac))
+                    continue;
+                if (hs.weaponOptions == null)
+                    hs.weaponOptions = new List<WeaponMount>(8);
+                if (!ListHasMount(hs.weaponOptions, gun))
+                    hs.weaponOptions.Add(gun);
+                placed = true;
+            }
+            if (placed)
+                return;
+            for (i = 0; i < sets.Length; i++)
+            {
+                HardpointSet hs = sets[i];
+                if (hs == null)
+                    continue;
+                if (hs.weaponOptions == null)
+                    hs.weaponOptions = new List<WeaponMount>(8);
+                if (!ListHasMount(hs.weaponOptions, gun))
+                    hs.weaponOptions.Add(gun);
+                break;
+            }
+        }
+
+        private static bool SetWantsInternal20(HardpointSet hs, int idx, Aircraft ac)
+        {
+            if (hs == null)
+                return false;
+            if (NameLooksInternalGun(hs.name))
+                return true;
+            if (hs.weaponOptions != null)
+            {
+                int i;
+                for (i = 0; i < hs.weaponOptions.Count; i++)
+                {
+                    if (IsInternal20(hs.weaponOptions[i]) || IsGunMount(hs.weaponOptions[i]))
+                        return true;
+                }
+            }
+            List<WeaponMount> stock = StockForSet(hs, ac);
+            if (stock != null)
+            {
+                int i;
+                for (i = 0; i < stock.Count; i++)
+                {
+                    if (IsInternal20(stock[i]) || IsGunMount(stock[i]))
+                        return true;
+                }
+            }
+            if (idx == 0)
+                return true;
+            return false;
+        }
+
+        internal static bool IsInternal20(WeaponMount m)
+        {
+            if (m == null)
+                return false;
+            string key = m.jsonKey != null ? m.jsonKey : string.Empty;
+            if (string.Equals(key, Internal20Key, StringComparison.OrdinalIgnoreCase))
+                return true;
+            if (key.IndexOf("20mm_Internal", StringComparison.OrdinalIgnoreCase) >= 0)
+                return true;
+            string n = ((m.mountName != null ? m.mountName : string.Empty) + " "
+                + (m.name != null ? m.name : string.Empty));
+            return n.IndexOf("20mm", StringComparison.OrdinalIgnoreCase) >= 0
+                && n.IndexOf("Internal", StringComparison.OrdinalIgnoreCase) >= 0;
+        }
+
+        private static bool NameLooksInternalGun(string name)
+        {
+            if (string.IsNullOrEmpty(name))
+                return false;
+            if (name.IndexOf("20mm", StringComparison.OrdinalIgnoreCase) >= 0)
+                return true;
+            if (name.IndexOf("Internal", StringComparison.OrdinalIgnoreCase) >= 0)
+                return true;
+            if (name.IndexOf("Cannon", StringComparison.OrdinalIgnoreCase) >= 0)
+                return true;
+            if (name.IndexOf("Gun", StringComparison.OrdinalIgnoreCase) >= 0
+                && name.IndexOf("Gunpod", StringComparison.OrdinalIgnoreCase) < 0
+                && name.IndexOf("Pod", StringComparison.OrdinalIgnoreCase) < 0)
+                return true;
+            return false;
+        }
+
+        internal static WeaponMount FindInternal20()
+        {
+            WeaponMount hit = FindMountByKey(Internal20Key);
+            if (hit != null)
+                return hit;
+            WeaponMount[] all = null;
+            try { all = Resources.FindObjectsOfTypeAll<WeaponMount>(); }
+            catch { all = null; }
+            if (all == null)
+                return null;
+            int i;
+            for (i = 0; i < all.Length; i++)
+            {
+                if (IsInternal20(all[i]))
+                    return all[i];
+            }
+            return null;
+        }
+
+        private static WeaponMount FindMountByKey(string key)
+        {
+            if (string.IsNullOrEmpty(key))
+                return null;
+            try
+            {
+                if (Encyclopedia.WeaponLookup != null)
+                {
+                    WeaponMount lookup;
+                    if (Encyclopedia.WeaponLookup.TryGetValue(key, out lookup) && lookup != null)
+                        return lookup;
+                }
+            }
+            catch { }
+            WeaponMount[] all = null;
+            try { all = Resources.FindObjectsOfTypeAll<WeaponMount>(); }
+            catch { all = null; }
+            if (all == null)
+                return null;
+            int i;
+            for (i = 0; i < all.Length; i++)
+            {
+                WeaponMount m = all[i];
+                if (m != null
+                    && string.Equals(m.jsonKey, key, StringComparison.OrdinalIgnoreCase))
+                    return m;
+            }
+            return null;
+        }
+
+        internal static void PrepareStockMount(WeaponMount m)
+        {
+            if (m == null)
+                return;
+            if (string.IsNullOrEmpty(m.mountName))
+            {
+                if (IsInternal20(m))
+                    m.mountName = "20mm Internal";
+                else if (!string.IsNullOrEmpty(m.jsonKey))
+                    m.mountName = m.jsonKey;
+            }
+            if (MountDisabledField == null)
+                return;
+            try
+            {
+                object cur = MountDisabledField.GetValue(m);
+                if (cur is bool && (bool)cur)
+                    MountDisabledField.SetValue(m, false);
+            }
+            catch { }
+        }
+
+        private static bool ParamsHaveInternal20(AircraftParameters p)
+        {
+            if (p == null)
+                return false;
+            if (p.loadouts != null)
+            {
+                int i;
+                for (i = 0; i < p.loadouts.Count; i++)
+                {
+                    NuclearOption.SavedMission.Loadout lo = p.loadouts[i];
+                    if (lo != null && ListHasInternal20(lo.weapons))
+                        return true;
+                }
+            }
+            return CountPresetWeapons(p.StandardLoadouts) > 0
+                && StandardLoadoutsHaveInternal20(p.StandardLoadouts);
+        }
+
+        private static bool StandardLoadoutsHaveInternal20(StandardLoadout[] presets)
+        {
+            if (presets == null)
+                return false;
+            int i;
+            for (i = 0; i < presets.Length; i++)
+            {
+                StandardLoadout sl = presets[i];
+                if (sl != null && sl.loadout != null && ListHasInternal20(sl.loadout.weapons))
+                    return true;
+            }
+            return false;
+        }
+
+        private static bool ListHasInternal20(List<WeaponMount> list)
+        {
+            if (list == null)
+                return false;
+            int i;
+            for (i = 0; i < list.Count; i++)
+            {
+                if (IsInternal20(list[i]))
+                    return true;
+            }
+            return false;
+        }
+
+        private static int CountPresetWeapons(StandardLoadout[] presets)
+        {
+            if (presets == null)
+                return 0;
+            int n = 0;
+            int i;
+            for (i = 0; i < presets.Length; i++)
+            {
+                StandardLoadout sl = presets[i];
+                if (sl == null || sl.disabled || sl.loadout == null || sl.loadout.weapons == null)
+                    continue;
+                int w;
+                for (w = 0; w < sl.loadout.weapons.Count; w++)
+                {
+                    if (sl.loadout.weapons[w] != null)
+                        n++;
+                }
+            }
+            return n;
         }
 
         internal static void NotifyCannotEject(Aircraft ac)
@@ -2986,10 +3832,7 @@ namespace OA27Variant
             if (ac == null || !IsMigClone(ac))
                 return;
             if (InEncyclopedia() || !IsLiveAircraft(ac))
-            {
-                jet.maxThrust = 0f;
                 return;
-            }
             if (!HasSimAuthority(ac))
                 return;
             ForceJetThrust(jet, ac, FullLoadThrust(ac));
@@ -4137,6 +4980,13 @@ namespace OA27Variant
     [HarmonyPatch(typeof(Aircraft), "Awake")]
     internal static class Patch_MiG15S_Awake
     {
+        [HarmonyPrefix]
+        [HarmonyPriority(Priority.First)]
+        private static void Prefix(Aircraft __instance)
+        {
+            Service.BindCloneDefinition(__instance);
+        }
+
         [HarmonyPostfix]
         private static void Postfix(Aircraft __instance)
         {
@@ -4356,12 +5206,49 @@ namespace OA27Variant
             catch { return true; }
             if (t != RadialMenuAction.ActionType.Eject)
                 return true;
+            Service.NotePlayerEjectIntent(aircraft);
             if (Service.HandleOaPartialEject(aircraft))
                 return false;
             if (!Service.BlockEjection(aircraft))
                 return true;
             Service.NotifyCannotEject(aircraft);
             return false;
+        }
+    }
+
+    [HarmonyPatch(typeof(PilotPlayerState), "PlayerControls")]
+    internal static class Patch_OA27_PlayerEjectIntent
+    {
+        [HarmonyPrefix]
+        [HarmonyPriority(Priority.First)]
+        private static void Prefix(PilotPlayerState __instance)
+        {
+            Service.NoteEjectIfPressed(__instance);
+        }
+    }
+
+    [HarmonyPatch(typeof(Player), "SetAircraft")]
+    internal static class Patch_OA27_SetAircraftEject
+    {
+        [HarmonyPrefix]
+        [HarmonyPriority(Priority.First)]
+        private static void Prefix(Player __instance, Aircraft aircraft)
+        {
+            if (__instance == null || aircraft == null)
+                return;
+            Aircraft old = null;
+            try { old = __instance.Aircraft; }
+            catch { old = null; }
+            if (old == null || object.ReferenceEquals(old, aircraft))
+                return;
+            Service.NoteSwitchAway(old);
+        }
+
+        [HarmonyPostfix]
+        [HarmonyPriority(Priority.Last)]
+        private static void Postfix()
+        {
+            Service.ClearSwitchAway();
         }
     }
 

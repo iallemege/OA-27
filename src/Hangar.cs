@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Reflection;
 using HarmonyLib;
 using NuclearOption.Networking;
+using NuclearOption.SavedMission;
 using UnityEngine;
 using UnityEngine.UI;
 
@@ -767,10 +768,10 @@ namespace OA27Variant
         }
 
         /// <summary>
-        /// Occupied only by a live networked aircraft on this pad, or a short
-        /// reserve after a successful TrySpawn. Hangar.Available and leftover
-        /// spawnedObject (preview / dummy) are not occupancy — empty pads start
-        /// Available=false on clients and still show the no-hangars panel.
+        /// Occupied only by a live aircraft still sitting on this pad.
+        /// Vanilla Hangar.Available is true after the jet leaves 50 m;
+        /// spawnedObject still points at that airborne airframe, so treating
+        /// any live spawnedObject as occupancy marks every pad in use.
         /// </summary>
         internal static bool IsPadFree(Hangar hangar)
         {
@@ -795,29 +796,60 @@ namespace OA27Variant
         {
             if (hangar == null)
                 return false;
+            try
+            {
+                if (hangar.Available)
+                    return false;
+            }
+            catch { }
+            Aircraft ac = OccupantRef(hangar);
+            if (ac == null || !Service.IsLiveAircraft(ac))
+                return false;
+            return AircraftOnThisPad(hangar, ac);
+        }
+
+        private static Aircraft OccupantRef(Hangar hangar)
+        {
             if (SpawnedObjectField != null)
             {
                 try
                 {
                     GameObject go = SpawnedObjectField.GetValue(hangar) as GameObject;
                     Aircraft spawned = AircraftOn(go);
-                    if (spawned != null && Service.IsLiveAircraft(spawned))
-                        return true;
+                    if (spawned != null)
+                        return spawned;
                 }
                 catch { }
             }
             try
             {
                 Unit u = hangar.GetUnit();
-                if (u != null && u)
-                {
-                    Aircraft parked = u as Aircraft;
-                    if (parked != null && Service.IsLiveAircraft(parked))
-                        return true;
-                }
+                return u as Aircraft;
             }
-            catch { }
-            return false;
+            catch { return null; }
+        }
+
+        private static bool AircraftOnThisPad(Hangar hangar, Aircraft ac)
+        {
+            if (hangar == null || ac == null || ac.transform == null)
+                return false;
+            Vector3 at = Vector3.zero;
+            try
+            {
+                Transform spawn = hangar.GetSpawnTransform();
+                at = spawn != null ? spawn.position : hangar.transform.position;
+            }
+            catch
+            {
+                try { at = hangar.transform.position; }
+                catch { return false; }
+            }
+            float dist = 0f;
+            try { dist = (ac.transform.position - at).magnitude; }
+            catch { return false; }
+            if (dist > 50f)
+                return false;
+            return Service.InHangarHold(ac) || NearPadSlow(ac);
         }
 
         private static Aircraft AircraftOn(GameObject go)
@@ -1206,7 +1238,7 @@ namespace OA27Variant
             return ResolveListSelection(menu);
         }
 
-        private static AircraftDefinition ResolveListSelection(AircraftSelectionMenu menu)
+        internal static AircraftDefinition ResolveListSelection(AircraftSelectionMenu menu)
         {
             if (SelectionField == null || IndexField == null)
                 return null;
@@ -1332,18 +1364,22 @@ namespace OA27Variant
     {
         [HarmonyPrefix]
         [HarmonyPriority(Priority.First)]
-        private static void Prefix(AircraftDefinition definition)
+        private static void Prefix(AircraftDefinition definition, Loadout loadout)
         {
             if (definition == null)
                 return;
             LoadoutLock.BeginVet(definition);
             LoadoutLock.NoteHangarDef(definition);
+            Service.SanitizeLoadout(loadout);
+            if (Service.IsOursDef(definition))
+                Service.BeginSpawnBind();
         }
 
         [HarmonyPostfix]
         [HarmonyPriority(Priority.Last)]
         private static void Postfix()
         {
+            Service.EndSpawnBind();
             LoadoutLock.EndVet();
         }
     }
@@ -1432,8 +1468,6 @@ namespace OA27Variant
     {
         private static readonly FieldInfo PreviewField =
             AccessTools.Field(typeof(AircraftSelectionMenu), "previewAircraft");
-        private static readonly FieldInfo SelectedTypeField =
-            AccessTools.Field(typeof(AircraftSelectionMenu), "selectedType");
 
         [HarmonyPrefix]
         [HarmonyPriority(Priority.First)]
@@ -1444,15 +1478,8 @@ namespace OA27Variant
             Aircraft preview = PreviewField.GetValue(__instance) as Aircraft;
             if (preview != null)
                 return true;
-            AircraftDefinition sel = null;
-            if (SelectedTypeField != null)
-            {
-                try { sel = SelectedTypeField.GetValue(__instance) as AircraftDefinition; }
-                catch { sel = null; }
-            }
-            if (Service.IsOursDef(sel))
-                return false;
-            return true;
+            // Vanilla Update calls previewAircraft.GetInputs() with no null check.
+            return false;
         }
     }
 
@@ -1464,9 +1491,12 @@ namespace OA27Variant
 
         [HarmonyPrefix]
         [HarmonyPriority(Priority.First)]
-        private static void Prefix()
+        private static void Prefix(AircraftSelectionMenu __instance)
         {
             Service.BeginHangarPreview();
+            AircraftDefinition intended = OaFlyButton.ResolveListSelection(__instance);
+            if (intended != null)
+                LoadoutLock.NoteHangarDef(intended);
         }
 
         [HarmonyFinalizer]
@@ -1491,7 +1521,7 @@ namespace OA27Variant
             AircraftDefinition sel = null;
             try { sel = __instance != null ? __instance.GetSelectedType() : null; }
             catch { sel = null; }
-            if (Service.IsOursDef(sel) || Service.IsOursDef(HangarInject.FindOaDef()))
+            if (Service.IsOursDef(sel))
                 return null;
             return __exception;
         }
@@ -1515,12 +1545,14 @@ namespace OA27Variant
         private static bool Prefix(
             Hangar __instance,
             AircraftDefinition definition,
+            Loadout loadout,
             ref Airbase.TrySpawnResult __result)
         {
             if (__instance == null || definition == null)
                 return true;
             LoadoutLock.BeginVet(definition);
             LoadoutLock.NoteHangarDef(definition);
+            Service.SanitizeLoadout(loadout);
             if (!Service.IsOursDef(definition))
                 return true;
             if (!Service.LocalPlayerMaySelectExclusive(definition))
@@ -1535,7 +1567,10 @@ namespace OA27Variant
             }
             HangarInject.EnsureOnHangar(__instance);
             if (HangarInject.IsPadFree(__instance) && !HangarInject.PadBlockedByOurs(__instance))
+            {
+                Service.BeginSpawnBind();
                 return true;
+            }
             __result = default(Airbase.TrySpawnResult);
             return false;
         }
@@ -1547,6 +1582,7 @@ namespace OA27Variant
             AircraftDefinition definition,
             Airbase.TrySpawnResult __result)
         {
+            Service.EndSpawnBind();
             if (__instance == null || definition == null)
                 return;
             LoadoutLock.EndVet();
