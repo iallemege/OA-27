@@ -26,6 +26,7 @@ namespace OA27Variant
         private static bool _started;
         private static bool _modsScanned;
         private static float _hideAt = -1f;
+        private static float _nextClone;
         private static string _status = "";
         private static GUIStyle _header;
         private static GUIStyle _body;
@@ -63,7 +64,14 @@ namespace OA27Variant
                 if (Plugin.Log != null)
                     Plugin.Log.LogInfo("OA-27Variant load screen (" + HoldSec.ToString("0") + "s)");
             }
-            try { Service.EnsureClones(); }
+            try
+            {
+                if (Time.unscaledTime >= _nextClone)
+                {
+                    _nextClone = Time.unscaledTime + 0.5f;
+                    Service.EnsureClones();
+                }
+            }
             catch { }
             RefreshRows();
             if (!_modsScanned)
@@ -81,7 +89,7 @@ namespace OA27Variant
             bool c = Service.OaClone != null;
             bool d = Service.OaDClone != null;
             bool e = Service.OaEClone != null;
-            bool donor = Service.FindDefByKey(Service.OaDonorKey) != null;
+            bool donor = Service.FindDonorDef() != null;
             SetRow(Service.OaDisplayName, c ? 1 : 0, 1, false);
             SetRow(Service.OaDDisplayName, d ? 1 : 0, 1, false);
             SetRow(Service.OaEDisplayName, e ? 1 : 0, 1, false);

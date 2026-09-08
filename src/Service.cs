@@ -1169,10 +1169,29 @@ namespace OA27Variant
         }
 
         private static bool _cloneReadyLogged;
+        private static bool _oaLoadoutsAdopted;
         private static float _nextDonorWarn;
 
         internal static void EnsureClones()
         {
+            if (_oaClone != null && _oaDClone != null && _oaEClone != null)
+            {
+                if (!_oaLoadoutsAdopted)
+                {
+                    SnapshotOaDonorLoadouts();
+                    AdoptOaStandardLoadouts(_oaClone);
+                    AdoptOaStandardLoadouts(_oaDClone);
+                    AdoptOaStandardLoadouts(_oaEClone);
+                    _oaLoadoutsAdopted = true;
+                }
+                if (!_cloneReadyLogged && Plugin.Log != null)
+                {
+                    _cloneReadyLogged = true;
+                    Plugin.Log.LogInfo("OA-27C / OA-27D / OA-27E ready (cloned from "
+                        + OaDonorKey + ")");
+                }
+                return;
+            }
             NobpDonor.Ensure();
             if (_oaClone == null)
                 _oaClone = MakeClone(
@@ -1200,10 +1219,14 @@ namespace OA27Variant
                     false);
             if (_oaClone != null && _oaDClone != null && _oaEClone != null)
             {
-                SnapshotOaDonorLoadouts();
-                AdoptOaStandardLoadouts(_oaClone);
-                AdoptOaStandardLoadouts(_oaDClone);
-                AdoptOaStandardLoadouts(_oaEClone);
+                if (!_oaLoadoutsAdopted)
+                {
+                    SnapshotOaDonorLoadouts();
+                    AdoptOaStandardLoadouts(_oaClone);
+                    AdoptOaStandardLoadouts(_oaDClone);
+                    AdoptOaStandardLoadouts(_oaEClone);
+                    _oaLoadoutsAdopted = true;
+                }
                 if (!_cloneReadyLogged && Plugin.Log != null)
                 {
                     _cloneReadyLogged = true;
@@ -2162,19 +2185,41 @@ namespace OA27Variant
             catch { cans = null; }
             if (cans == null)
                 return;
-            float playerZ = player != null ? LocalZ(ac, player.transform) : 0f;
             for (int i = 0; i < cans.Length; i++)
             {
                 Canopy c = cans[i];
                 if (c == null || c.transform == null)
                     continue;
-                if (IsProtectedFlightHardware(c.transform, ac, player))
-                    continue;
-                if (player != null && UnderRoot(c.transform, player.transform))
-                    continue;
-                if (player != null && LocalZ(ac, c.transform) >= playerZ - 0.15f)
-                    continue;
+                DetachCrewFromCanopy(ac, player, c.transform);
                 try { c.Eject(); }
+                catch { }
+            }
+        }
+
+        private static void DetachCrewFromCanopy(Aircraft ac, Pilot player, Transform canopy)
+        {
+            if (ac == null || canopy == null)
+                return;
+            Transform dest = ac.transform;
+            if (player != null && player.transform != null
+                && UnderRoot(player.transform, canopy)
+                && !object.ReferenceEquals(player.transform, dest))
+            {
+                try { player.transform.SetParent(dest, true); }
+                catch { }
+            }
+            Camera[] cams = null;
+            try { cams = ac.GetComponentsInChildren<Camera>(true); }
+            catch { cams = null; }
+            if (cams == null)
+                return;
+            for (int i = 0; i < cams.Length; i++)
+            {
+                if (cams[i] == null || cams[i].transform == null)
+                    continue;
+                if (!UnderRoot(cams[i].transform, canopy))
+                    continue;
+                try { cams[i].transform.SetParent(dest, true); }
                 catch { }
             }
         }
@@ -5068,37 +5113,6 @@ namespace OA27Variant
             try { ac = __instance.GetComponentInParent<Aircraft>(); }
             catch { ac = null; }
             Service.ApplyPropPower(ac);
-        }
-    }
-
-    [HarmonyPatch(typeof(Turbojet), "FixedUpdate")]
-    internal static class Patch_MiG15S_JetFixedUpdate
-    {
-        [HarmonyPrefix]
-        [HarmonyPriority(Priority.First)]
-        private static void Prefix(Turbojet __instance)
-        {
-            Service.ForceJetThrust(__instance);
-        }
-
-        [HarmonyPostfix]
-        [HarmonyPriority(Priority.Last)]
-        private static void Postfix(Turbojet __instance)
-        {
-            Service.ForceJetThrust(__instance);
-        }
-    }
-
-    [HarmonyPatch(typeof(Turbojet), "GetMaxThrust")]
-    internal static class Patch_MiG15S_JetMaxThrust
-    {
-        [HarmonyPostfix]
-        [HarmonyPriority(Priority.Last)]
-        private static void Postfix(Turbojet __instance, ref float __result)
-        {
-            float t;
-            if (Service.TryOursMaxThrust(__instance, out t))
-                __result = t;
         }
     }
 

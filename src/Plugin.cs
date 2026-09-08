@@ -11,7 +11,7 @@ namespace OA27Variant
     {
         public const string GUID = "com.ial.oa27variant";
         public const string Name = "OA-27Variant";
-        public const string Version = "1.1.18";
+        public const string Version = "1.1.20";
     }
 
     [BepInPlugin(PluginInfo.GUID, PluginInfo.Name, PluginInfo.Version)]

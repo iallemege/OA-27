@@ -8,8 +8,7 @@ using UnityEngine;
 namespace OA27Variant
 {
     /// <summary>
-    /// KH38MT single and 30mm swivel pod on every aircraft hardpoint.
-    /// OA-27C still restores its stock catalog on top of those extras.
+    /// 30mm swivel pod (and KH38MT if that plugin is present) on OA-27 C/D/E pylons only.
     /// </summary>
     internal static class GunpodInject
     {
@@ -22,10 +21,12 @@ namespace OA27Variant
         private static WeaponMount _kh38;
         private static float _nextFind;
         private static float _nextInject;
+        private static bool _kh38GaveUp;
+        private static int _kh38Misses;
 
         internal static void Tick()
         {
-            if (_pod == null || _kh38 == null)
+            if (_pod == null || (!_kh38GaveUp && _kh38 == null))
                 FindOrClone();
             if (_pod == null && _kh38 == null)
                 return;
@@ -65,11 +66,17 @@ namespace OA27Variant
             catch { }
             try { Service.EnsureClones(); }
             catch { }
-            if (_kh38 == null)
+            if (_kh38 == null && !_kh38GaveUp)
             {
                 _kh38 = FindMount(Kh38Key);
                 if (_kh38 == null)
                     _kh38 = FindMountByName("KH38MT");
+                if (_kh38 == null)
+                {
+                    _kh38Misses++;
+                    if (_kh38Misses >= 3)
+                        _kh38GaveUp = true;
+                }
             }
             if (_pod != null)
                 return;
@@ -94,6 +101,18 @@ namespace OA27Variant
         {
             if (string.IsNullOrEmpty(key))
                 return null;
+            try
+            {
+                if (Encyclopedia.WeaponLookup != null)
+                {
+                    WeaponMount lookup;
+                    if (Encyclopedia.WeaponLookup.TryGetValue(key, out lookup) && lookup != null)
+                        return lookup;
+                }
+            }
+            catch
+            {
+            }
             WeaponMount[] all = null;
             try { all = Resources.FindObjectsOfTypeAll<WeaponMount>(); }
             catch { all = null; }
@@ -161,8 +180,7 @@ namespace OA27Variant
             if (ac == null)
                 return;
             if (!Service.IsOaFamilyClone(ac) && !Service.IsOaHangarPreview(ac)
-                && !Service.IsOaPowered(ac)
-                && !Service.IsOaFamilyDef(LoadoutLock.ActiveSpawnDef()))
+                && !Service.IsOaPowered(ac))
                 return;
             Service.DetachOaHardpoints(ac);
             for (int i = 0; i < wm.hardpointSets.Length; i++)
@@ -195,11 +213,7 @@ namespace OA27Variant
             if (ac == null)
                 ac = LoadoutLock.SelectorAircraft;
             if (!Service.IsOaLoadoutContext(ac, hs))
-            {
-                OfferMount(list, Pod);
-                OfferMount(list, Kh38);
                 return;
-            }
             Service.MergeOaStock(hs, ac);
             Service.MergeLoadoutSlotsIntoHardpoints(ac);
             if (hs.weaponOptions == null)
@@ -219,6 +233,16 @@ namespace OA27Variant
             OfferOnSet(hs, ac);
             OfferMount(list, Pod);
             OfferMount(list, Kh38);
+        }
+
+        internal static bool MayAlterCatalog(HardpointSet hs)
+        {
+            if (hs == null || IsNavalHardpoint(hs))
+                return false;
+            Aircraft ac = LoadoutLock.FindAircraft(hs);
+            if (ac == null)
+                ac = LoadoutLock.SelectorAircraft;
+            return Service.IsOaLoadoutContext(ac, hs);
         }
 
         internal static bool IsNavalHardpoint(HardpointSet hs)
@@ -312,6 +336,8 @@ namespace OA27Variant
         [HarmonyPriority(Priority.First)]
         private static void Prefix(HardpointSet hardpointSet)
         {
+            if (!GunpodInject.MayAlterCatalog(hardpointSet))
+                return;
             GunpodInject.OfferOnSet(hardpointSet, LoadoutLock.SelectorAircraft);
         }
 
@@ -319,6 +345,8 @@ namespace OA27Variant
         [HarmonyPriority(Priority.Last)]
         private static void Finalizer(HardpointSet hardpointSet, List<WeaponMount> outAvailable)
         {
+            if (!GunpodInject.MayAlterCatalog(hardpointSet))
+                return;
             GunpodInject.RestoreStockPlusPod(hardpointSet, outAvailable);
         }
     }
@@ -337,7 +365,7 @@ namespace OA27Variant
         {
             if (!GunpodInject.IsOurExtra(requestedMount))
                 return true;
-            if (GunpodInject.IsNavalHardpoint(hardpointSet))
+            if (!GunpodInject.MayAlterCatalog(hardpointSet))
                 return true;
             GunpodInject.OfferOnSet(hardpointSet, LoadoutLock.SelectorAircraft);
             __result = true;
@@ -355,7 +383,7 @@ namespace OA27Variant
         {
             if (__result || requestedMount == null)
                 return;
-            if (GunpodInject.IsNavalHardpoint(hardpointSet))
+            if (!GunpodInject.MayAlterCatalog(hardpointSet))
                 return;
             if (GunpodInject.IsOurExtra(requestedMount))
                 __result = true;
@@ -371,7 +399,7 @@ namespace OA27Variant
         {
             if (!GunpodInject.IsOurExtra(mount))
                 return true;
-            if (GunpodInject.IsNavalHardpoint(hardpointSet))
+            if (!GunpodInject.MayAlterCatalog(hardpointSet))
                 return true;
             GunpodInject.OfferOnSet(hardpointSet, LoadoutLock.SelectorAircraft);
             __result = true;
@@ -384,7 +412,7 @@ namespace OA27Variant
         {
             if (__result || mount == null)
                 return;
-            if (GunpodInject.IsNavalHardpoint(hardpointSet))
+            if (!GunpodInject.MayAlterCatalog(hardpointSet))
                 return;
             if (GunpodInject.IsOurExtra(mount))
                 __result = true;
